@@ -39,6 +39,18 @@ cp .env.example .env
 
 For normal local development, the example values are enough. Add real WhatsApp values only when testing with Meta.
 
+The app builds its local PostgreSQL connection URL from:
+
+```text
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=jan_setu
+POSTGRES_USER=jan_setu_app
+POSTGRES_PASSWORD=jan_setu_dev_password
+```
+
+Use `DATABASE_URL` only when a deployment platform gives you one complete database URL.
+
 ### 4. Install Python dependencies
 
 ```sh
@@ -129,6 +141,14 @@ Stop local containers:
 
 ```sh
 docker compose down
+```
+
+If you change local Postgres credentials after a database volume already exists, recreate the dev volume:
+
+```sh
+docker compose down -v
+docker compose up -d postgres
+uv run alembic upgrade head
 ```
 
 ## Run Everything In Docker

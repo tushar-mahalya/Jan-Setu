@@ -9,7 +9,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from jan_setu.config import get_settings
-from jan_setu.db import Base
+from jan_setu.database import Base
+import jan_setu.models  # noqa: F401
 
 config = context.config
 
@@ -20,7 +21,7 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return get_settings().database_url
+    return get_settings().sqlalchemy_database_url
 
 
 def run_migrations_offline() -> None:

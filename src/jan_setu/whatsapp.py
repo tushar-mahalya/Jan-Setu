@@ -15,8 +15,9 @@ class WhatsAppClientUnavailable(RuntimeError):
 
 
 class WhatsAppCloudClient:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, http_client: httpx.AsyncClient | None = None) -> None:
         self.settings = settings
+        self.http_client = http_client
 
     async def send_text(self, *, to: str, body: str) -> dict[str, Any]:
         if not self.settings.whatsapp_access_token or not self.settings.whatsapp_phone_number_id:
@@ -36,8 +37,17 @@ class WhatsAppCloudClient:
             "type": "text",
             "text": {"preview_url": False, "body": body},
         }
-        async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
-            response = await client.post(
+        if self.http_client is not None:
+            response = await self.http_client.post(
+                url,
+                headers={"Authorization": f"Bearer {token}"},
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as http_client:
+            response = await http_client.post(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
                 json=payload,
