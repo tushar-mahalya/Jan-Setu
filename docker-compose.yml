@@ -8,7 +8,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-jan_setu_app}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jan_setu_dev_password}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -37,7 +38,36 @@ services:
       WHATSAPP_GRAPH_API_VERSION: ${WHATSAPP_GRAPH_API_VERSION:-v20.0}
       REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-10}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - services
+
+  worker:
+    build: .
+    image: jan-setu-api:local
+    command: uv run jan-setu-worker
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-jan_setu}
+      POSTGRES_USER: ${POSTGRES_USER:-jan_setu_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jan_setu_dev_password}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-10}
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy

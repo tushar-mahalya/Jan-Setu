@@ -22,6 +22,13 @@ class MessageRead(BaseModel):
     direction: str
     message_type: str
     text_body: str | None
+    media_id: str | None
+    media_mime_type: str | None
+    location_latitude: float | None
+    location_longitude: float | None
+    location_name: str | None
+    location_address: str | None
+    location_url: str | None
     raw_payload: dict[str, Any]
     received_at: datetime
     created_at: datetime

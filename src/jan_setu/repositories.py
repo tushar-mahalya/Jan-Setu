@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,11 +51,27 @@ async def store_webhook_event(
         source="whatsapp",
         signature_valid=signature_valid,
         payload=payload,
-        processed_at=utc_now(),
     )
     session.add(event)
     await session.flush()
     return event
+
+
+async def mark_event_processed(session: AsyncSession, *, event_id: Any) -> None:
+    await session.execute(
+        update(WebhookEvent).where(WebhookEvent.id == event_id).values(processed_at=utc_now())
+    )
+
+
+async def fetch_unprocessed_events(session: AsyncSession, *, limit: int) -> list[WebhookEvent]:
+    result = await session.execute(
+        select(WebhookEvent)
+        .where(WebhookEvent.processed_at.is_(None))
+        .order_by(WebhookEvent.created_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    return list(result.scalars().all())
 
 
 async def store_incoming_messages(
@@ -77,6 +93,13 @@ async def store_incoming_messages(
                 direction="incoming",
                 message_type=incoming.message_type,
                 text_body=incoming.text_body,
+                media_id=incoming.media_id,
+                media_mime_type=incoming.media_mime_type,
+                location_latitude=incoming.location_latitude,
+                location_longitude=incoming.location_longitude,
+                location_name=incoming.location_name,
+                location_address=incoming.location_address,
+                location_url=incoming.location_url,
                 raw_payload=incoming.raw_payload,
                 received_at=incoming.received_at,
             )
@@ -91,7 +114,9 @@ async def store_incoming_messages(
             )
             continue
 
-        stored_messages.append(StoredIncomingMessage(message=None, wa_id=incoming.wa_id, created=False))
+        stored_messages.append(
+            StoredIncomingMessage(message=None, wa_id=incoming.wa_id, created=False)
+        )
     return stored_messages
 
 

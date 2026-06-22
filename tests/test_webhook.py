@@ -10,8 +10,14 @@ from sqlalchemy.dialects import postgresql
 
 from jan_setu.config import get_settings
 from jan_setu.main import app
+from jan_setu.processing import process_pending_events
 from jan_setu.repositories import store_incoming_messages, upsert_contact
-from jan_setu.whatsapp import IncomingWhatsAppMessage, WhatsAppCloudClient, verify_meta_signature
+from jan_setu.whatsapp import (
+    IncomingWhatsAppMessage,
+    WhatsAppCloudClient,
+    iter_incoming_messages,
+    verify_meta_signature,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -195,3 +201,124 @@ def test_duplicate_incoming_message_skips_existing_message_lookup():
     assert calls == 2
     assert stored[0].message is None
     assert stored[0].created is False
+
+
+def test_iter_incoming_messages_extracts_media_fields():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "contacts": [{"wa_id": "911234567890", "profile": {"name": "Tushar"}}],
+                            "messages": [
+                                {
+                                    "from": "911234567890",
+                                    "id": "wamid.image",
+                                    "type": "image",
+                                    "image": {
+                                        "id": "media-123",
+                                        "mime_type": "image/jpeg",
+                                        "caption": "broken streetlight",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = iter_incoming_messages(payload)
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.message_type == "image"
+    assert message.media_id == "media-123"
+    assert message.media_mime_type == "image/jpeg"
+    assert message.text_body == "broken streetlight"
+
+
+def test_iter_incoming_messages_handles_text_and_unsupported_types():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "911234567890",
+                                    "id": "wamid.text",
+                                    "type": "text",
+                                    "text": {"body": "no water supply"},
+                                },
+                                {
+                                    "from": "911234567890",
+                                    "id": "wamid.location",
+                                    "type": "location",
+                                    "location": {
+                                        "latitude": 18.5204,
+                                        "longitude": 73.8567,
+                                        "name": "Pune Municipal Corporation",
+                                        "address": "Shivajinagar, Pune",
+                                        "url": "https://maps.example/location",
+                                    },
+                                },
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = iter_incoming_messages(payload)
+
+    assert messages[0].text_body == "no water supply"
+    assert messages[0].media_id is None
+    assert messages[1].message_type == "location"
+    assert messages[1].text_body is None
+    assert messages[1].media_id is None
+    assert messages[1].location_latitude == 18.5204
+    assert messages[1].location_longitude == 73.8567
+    assert messages[1].location_name == "Pune Municipal Corporation"
+    assert messages[1].location_address == "Shivajinagar, Pune"
+    assert messages[1].location_url == "https://maps.example/location"
+
+
+def test_v1_endpoint_rejects_missing_api_key_outside_development(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("API_KEY", "secret-key")
+    with TestClient(app) as client:
+        response = client.get("/v1/contacts")
+
+    assert response.status_code == 401
+
+
+def test_v1_endpoint_requires_api_key_config_outside_development(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("API_KEY", "")
+    with TestClient(app) as client:
+        response = client.get("/v1/contacts")
+
+    assert response.status_code == 503
+
+
+def test_process_pending_events_returns_zero_when_no_events():
+    class Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return []
+
+    class Session:
+        async def execute(self, statement):
+            return Result()
+
+    async def run():
+        return await process_pending_events(Session(), batch_size=10)
+
+    assert anyio.run(run) == 0

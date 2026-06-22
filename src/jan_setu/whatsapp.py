@@ -65,6 +65,13 @@ class IncomingWhatsAppMessage:
     text_body: str | None
     raw_payload: dict[str, Any]
     received_at: datetime
+    media_id: str | None = None
+    media_mime_type: str | None = None
+    location_latitude: float | None = None
+    location_longitude: float | None = None
+    location_name: str | None = None
+    location_address: str | None = None
+    location_url: str | None = None
 
 
 def verify_meta_signature(
@@ -78,7 +85,9 @@ def verify_meta_signature(
     if not signature_header or not signature_header.startswith("sha256="):
         return False
 
-    secret_value = app_secret.get_secret_value() if isinstance(app_secret, SecretStr) else app_secret
+    secret_value = (
+        app_secret.get_secret_value() if isinstance(app_secret, SecretStr) else app_secret
+    )
     digest = hmac.new(
         key=secret_value.encode("utf-8"),
         msg=raw_body,
@@ -94,6 +103,51 @@ def parse_whatsapp_timestamp(value: str | int | None) -> datetime:
         return datetime.fromtimestamp(int(value), tz=timezone.utc)
     except (TypeError, ValueError, OSError):
         return datetime.now(timezone.utc)
+
+
+MEDIA_MESSAGE_TYPES = frozenset({"image", "audio", "video", "document", "voice", "sticker"})
+
+
+def _extract_message_content(
+    message: dict[str, Any], message_type: str
+) -> tuple[str | None, str | None, str | None]:
+    """Return (text_body, media_id, media_mime_type) for a WhatsApp message.
+
+    Text bodies and media captions are normalised into ``text_body`` so the
+    processing pipeline has a single place to read what the user said.
+    """
+    if message_type == "text":
+        body = message.get("text", {})
+        return (body.get("body") if isinstance(body, dict) else None), None, None
+    if message_type in MEDIA_MESSAGE_TYPES:
+        media = message.get(message_type, {})
+        if isinstance(media, dict):
+            return media.get("caption"), media.get("id"), media.get("mime_type")
+    return None, None, None
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_location(
+    message: dict[str, Any], message_type: str
+) -> tuple[float | None, float | None, str | None, str | None, str | None]:
+    if message_type != "location":
+        return None, None, None, None, None
+    location = message.get("location", {})
+    if not isinstance(location, dict):
+        return None, None, None, None, None
+    return (
+        _as_float(location.get("latitude")),
+        _as_float(location.get("longitude")),
+        location.get("name"),
+        location.get("address"),
+        location.get("url"),
+    )
 
 
 def iter_incoming_messages(payload: dict[str, Any]) -> list[IncomingWhatsAppMessage]:
@@ -112,7 +166,12 @@ def iter_incoming_messages(payload: dict[str, Any]) -> list[IncomingWhatsAppMess
                     continue
 
                 message_type = message.get("type", "unknown")
-                text_body = message.get("text", {}).get("body") if message_type == "text" else None
+                text_body, media_id, media_mime_type = _extract_message_content(
+                    message, message_type
+                )
+                latitude, longitude, location_name, location_address, location_url = (
+                    _extract_location(message, message_type)
+                )
                 messages.append(
                     IncomingWhatsAppMessage(
                         wa_id=wa_id,
@@ -122,6 +181,13 @@ def iter_incoming_messages(payload: dict[str, Any]) -> list[IncomingWhatsAppMess
                         text_body=text_body,
                         raw_payload=message,
                         received_at=parse_whatsapp_timestamp(message.get("timestamp")),
+                        media_id=media_id,
+                        media_mime_type=media_mime_type,
+                        location_latitude=latitude,
+                        location_longitude=longitude,
+                        location_name=location_name,
+                        location_address=location_address,
+                        location_url=location_url,
                     )
                 )
     return messages

@@ -7,15 +7,19 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel superseded runs on the same branch/PR to save minutes and avoid stale results.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Ruff and tests
+  lint:
+    name: Lint (pre-commit)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,16 +29,82 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: .python-version
-
       - name: Install dependencies
         run: uv sync --frozen
 
       - name: Run pre-commit
-        run: uv run pre-commit run --all-files
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
 
       - name: Run tests
         run: uv run pytest
+
+  migrations:
+    name: Migration check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: jan_setu
+          POSTGRES_USER: jan_setu_app
+          POSTGRES_PASSWORD: jan_setu_dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jan_setu_app -d jan_setu"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: jan_setu
+      POSTGRES_USER: jan_setu_app
+      POSTGRES_PASSWORD: jan_setu_dev_password
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Apply migrations to a clean database
+        run: uv run alembic upgrade head
+
+      - name: Check models match migrations (no drift)
+        run: uv run alembic check
+
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [lint, test, migrations]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required job failed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
+      - name: All checks passed
+        run: echo "lint, test, and migration checks all passed"

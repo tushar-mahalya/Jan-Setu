@@ -18,7 +18,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app_settings = get_settings()
-    async with httpx.AsyncClient(timeout=app_settings.request_timeout_seconds) as http_client:
+    async with httpx.AsyncClient(
+        timeout=app_settings.request_timeout_seconds,
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        transport=httpx.AsyncHTTPTransport(retries=2),
+    ) as http_client:
         app.state.http_client = http_client
         yield
 

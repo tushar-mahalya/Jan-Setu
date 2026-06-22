@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 jan-setu-api = "jan_setu.main:run"
+jan-setu-worker = "jan_setu.worker:run"
 
 [dependency-groups]
 dev = [

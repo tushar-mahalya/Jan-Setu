@@ -28,4 +28,15 @@ def test_settings_database_url_override_wins():
         postgres_password="jan_setu_dev_password",
     )
 
-    assert settings.sqlalchemy_database_url == "postgresql+asyncpg://override:secret@db.example.com:5432/prod"
+    assert (
+        settings.sqlalchemy_database_url
+        == "postgresql+asyncpg://override:secret@db.example.com:5432/prod"
+    )
+
+
+def test_worker_and_reply_settings_have_defaults():
+    settings = Settings(_env_file=None)
+
+    assert settings.auto_reply_enabled is False
+    assert settings.worker_poll_seconds == 2.0
+    assert settings.worker_batch_size == 10

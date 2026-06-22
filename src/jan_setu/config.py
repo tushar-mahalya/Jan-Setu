@@ -32,9 +32,15 @@ class Settings(BaseSettings):
     whatsapp_graph_api_version: str = "v20.0"
     request_timeout_seconds: float = 10.0
 
+    api_key: SecretStr | None = None
+
+    auto_reply_enabled: bool = False
+    worker_poll_seconds: float = 2.0
+    worker_batch_size: int = 10
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    @field_validator("whatsapp_app_secret", "whatsapp_access_token", mode="before")
+    @field_validator("whatsapp_app_secret", "whatsapp_access_token", "api_key", mode="before")
     @classmethod
     def empty_secret_to_none(cls, value: SecretStr | str | None) -> SecretStr | str | None:
         return None if value == "" else value
@@ -94,9 +100,7 @@ def configure_logging(
     if log_format.lower() == "json":
         handler.setFormatter(JsonLogFormatter())
     else:
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
 
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]

@@ -1,9 +1,19 @@
+import hmac
 import logging
 from json import JSONDecodeError
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,10 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jan_setu.config import Settings, get_settings
 from jan_setu.database import get_session
 from jan_setu.models import Contact, WhatsAppMessage
+from jan_setu.processing import process_webhook_messages
 from jan_setu.repositories import (
     list_contacts,
     list_messages,
-    store_incoming_messages,
     store_outgoing_message,
     store_webhook_event,
 )
@@ -32,6 +42,25 @@ router = APIRouter()
 
 def is_development_environment(environment: str) -> bool:
     return environment.lower() in {"development", "dev", "local", "test", "testing"}
+
+
+def require_api_key(
+    app_settings: Annotated[Settings, Depends(get_settings)],
+    x_api_key: Annotated[str | None, Header()] = None,
+) -> None:
+    if app_settings.api_key is None:
+        if is_development_environment(app_settings.environment):
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API_KEY is required outside development.",
+        )
+    expected = app_settings.api_key.get_secret_value()
+    if not x_api_key or not hmac.compare_digest(x_api_key, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
 
 
 def get_whatsapp_client(
@@ -55,7 +84,12 @@ async def ready(session: Annotated[AsyncSession, Depends(get_session)]) -> dict[
     return {"status": "ready", "service": "api"}
 
 
-@router.get("/v1/contacts", response_model=list[ContactRead], tags=["contacts"])
+@router.get(
+    "/v1/contacts",
+    response_model=list[ContactRead],
+    tags=["contacts"],
+    dependencies=[Depends(require_api_key)],
+)
 async def get_contacts(
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -64,7 +98,12 @@ async def get_contacts(
     return await list_contacts(session, limit=limit, offset=offset)
 
 
-@router.get("/v1/messages", response_model=list[MessageRead], tags=["messages"])
+@router.get(
+    "/v1/messages",
+    response_model=list[MessageRead],
+    tags=["messages"],
+    dependencies=[Depends(require_api_key)],
+)
 async def get_messages(
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
@@ -78,6 +117,7 @@ async def get_messages(
     response_model=SendTextResponse,
     status_code=status.HTTP_202_ACCEPTED,
     tags=["messages"],
+    dependencies=[Depends(require_api_key)],
 )
 async def send_text_message(
     request: SendTextRequest,
@@ -88,7 +128,9 @@ async def send_text_message(
         provider_response = await client.send_text(to=request.to, body=request.body)
     except WhatsAppClientUnavailable as exc:
         logger.warning("whatsapp_client_unavailable")
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
     except httpx.HTTPStatusError as exc:
         logger.warning(
             "whatsapp_provider_error",
@@ -96,7 +138,10 @@ async def send_text_message(
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"provider_status": exc.response.status_code, "provider_body": exc.response.text},
+            detail={
+                "provider_status": exc.response.status_code,
+                "provider_body": exc.response.text,
+            },
         ) from exc
 
     provider_messages: list[dict[str, Any]] = provider_response.get("messages", [])
@@ -130,6 +175,7 @@ async def receive_webhook(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     app_settings: Annotated[Settings, Depends(get_settings)],
+    background_tasks: BackgroundTasks,
     x_hub_signature_256: Annotated[str | None, Header()] = None,
 ) -> dict[str, Any]:
     if app_settings.whatsapp_app_secret is None and not is_development_environment(
@@ -153,26 +199,27 @@ async def receive_webhook(
     try:
         payload = await request.json()
     except JSONDecodeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload") from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload"
+        ) from exc
     if not isinstance(payload, dict):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Webhook payload must be an object",
         )
 
+    # Persist the raw event and acknowledge Meta immediately; the actual message
+    # storage and (future) complaint pipeline run off the request path so a slow
+    # or failing processor never causes Meta to retry or disable the webhook.
     incoming_messages = iter_incoming_messages(payload)
-    await store_webhook_event(session, payload=payload, signature_valid=True)
-    stored_messages = await store_incoming_messages(session, incoming_messages)
-
+    event = await store_webhook_event(session, payload=payload, signature_valid=True)
     await session.commit()
+
+    background_tasks.add_task(process_webhook_messages, event.id, incoming_messages)
+
     messages_seen = len(incoming_messages)
-    messages_stored = sum(1 for message in stored_messages if message.created)
     logger.info(
         "whatsapp_webhook_accepted",
-        extra={"messages_seen": messages_seen, "messages_stored": messages_stored},
+        extra={"event_id": str(event.id), "messages_seen": messages_seen},
     )
-    return {
-        "status": "accepted",
-        "messages_seen": messages_seen,
-        "messages_stored": messages_stored,
-    }
+    return {"status": "accepted", "messages_seen": messages_seen}

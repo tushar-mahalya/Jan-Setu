@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -37,8 +37,17 @@ class WhatsAppMessage(TimestampMixin, Base):
     direction: Mapped[str] = mapped_column(String(16), nullable=False)
     message_type: Mapped[str] = mapped_column(String(64), nullable=False)
     text_body: Mapped[str | None] = mapped_column(Text)
+    media_id: Mapped[str | None] = mapped_column(String(255))
+    media_mime_type: Mapped[str | None] = mapped_column(String(255))
+    location_latitude: Mapped[float | None] = mapped_column(Float)
+    location_longitude: Mapped[float | None] = mapped_column(Float)
+    location_name: Mapped[str | None] = mapped_column(String(255))
+    location_address: Mapped[str | None] = mapped_column(Text)
+    location_url: Mapped[str | None] = mapped_column(Text)
     raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
 
     contact: Mapped[Contact | None] = relationship(back_populates="messages")
 
@@ -50,5 +59,7 @@ class WebhookEvent(Base):
     source: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     signature_valid: Mapped[bool] = mapped_column(nullable=False, default=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
