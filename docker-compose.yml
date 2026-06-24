@@ -21,7 +21,7 @@ services:
   api:
     build: .
     image: jan-setu-api:local
-    command: uv run uvicorn jan_setu.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn jan_setu.main:app --host 0.0.0.0 --port 8000
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -55,7 +55,7 @@ services:
   worker:
     build: .
     image: jan-setu-api:local
-    command: uv run jan-setu-worker
+    command: jan-setu-worker
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
