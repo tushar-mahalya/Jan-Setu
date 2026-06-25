@@ -13,6 +13,16 @@ repos:
       - id: detect-private-key
       - id: debug-statements
 
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+        stages: [commit-msg]
+        args:
+          - --contrib=contrib-title-conventional-commits
+          - --ignore=body-is-missing
+          - --msg-filename
+
   - repo: local
     hooks:
       - id: ruff-check
