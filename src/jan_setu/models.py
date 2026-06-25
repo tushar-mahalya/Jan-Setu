@@ -160,6 +160,34 @@ class ExternalRateLimit(Base):
     )
 
 
+class Grievance(TimestampMixin, Base):
+    """A registered citizen complaint. At most one per conversation (the unique
+    ``conversation_id`` makes registration idempotent). ``human_id`` is the
+    citizen-facing ticket number (e.g. ``JS-20260625-00001``) from a Postgres
+    sequence; the UUID ``id`` is the internal key."""
+
+    __tablename__ = "grievances"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    human_id: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contacts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), unique=True
+    )
+    location_latitude: Mapped[float | None] = mapped_column(Float)
+    location_longitude: Mapped[float | None] = mapped_column(Float)
+    location_address: Mapped[str | None] = mapped_column(Text)
+    issue_message_ids: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    issue_text: Mapped[str | None] = mapped_column(Text)  # filled later by the STT slice
+    photo_media_id: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="registered")
+
+
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
 

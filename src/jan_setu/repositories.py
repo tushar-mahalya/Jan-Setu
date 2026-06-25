@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from jan_setu.models import (
     Contact,
     Conversation,
     FsmMessageConsumption,
+    Grievance,
     WebhookEvent,
     WhatsAppMessage,
 )
@@ -370,3 +371,49 @@ async def fetch_sweepable_outbound(session: AsyncSession, *, limit: int) -> list
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def create_grievance(
+    session: AsyncSession,
+    *,
+    contact_id: Any,
+    conversation_id: Any,
+    context: dict[str, Any],
+) -> tuple[Grievance, bool]:
+    """Register a grievance from the conversation context. Idempotent on
+    ``conversation_id`` (unique) — a replay returns the existing grievance with
+    its original human id. Returns (grievance, created)."""
+    location = context.get("location", {})
+    issue = context.get("issue", {})
+    photo = context.get("photo", {})
+    issue_message_ids = [
+        message["message_id"] for message in issue.get("messages", []) if message.get("message_id")
+    ]
+
+    sequence = (await session.execute(text("SELECT nextval('grievance_human_seq')"))).scalar_one()
+    human_id = f"JS-{utc_now():%Y%m%d}-{int(sequence):05d}"
+
+    statement = (
+        insert(Grievance)
+        .values(
+            human_id=human_id,
+            contact_id=contact_id,
+            conversation_id=conversation_id,
+            location_latitude=location.get("lat"),
+            location_longitude=location.get("lon"),
+            location_address=location.get("display_address"),
+            issue_message_ids=issue_message_ids,
+            photo_media_id=photo.get("media_id"),
+            status="registered",
+        )
+        .on_conflict_do_nothing(index_elements=[Grievance.conversation_id])
+        .returning(Grievance)
+    )
+    grievance = (await session.execute(statement)).scalar_one_or_none()
+    if grievance is not None:
+        return grievance, True
+
+    existing = (
+        await session.execute(select(Grievance).where(Grievance.conversation_id == conversation_id))
+    ).scalar_one()
+    return existing, False

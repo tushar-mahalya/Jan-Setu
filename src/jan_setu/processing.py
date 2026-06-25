@@ -14,12 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.config import Settings, get_settings
 from jan_setu.conversation import advance
+from jan_setu import copy as msg
 from jan_setu.database import AsyncSessionLocal
 from jan_setu.dispatch import send_pending
 from jan_setu.geocoding import reverse_geocode_cached
 from jan_setu.repositories import (
     annotate_consumption,
     claim_inbound,
+    create_grievance,
     fetch_unprocessed_events,
     lock_contact_and_get_conversation,
     mark_event_processed,
@@ -28,7 +30,12 @@ from jan_setu.repositories import (
     upsert_contact,
     upsert_conversation_state,
 )
-from jan_setu.whatsapp import IncomingWhatsAppMessage, WhatsAppCloudClient, iter_incoming_messages
+from jan_setu.whatsapp import (
+    IncomingWhatsAppMessage,
+    WhatsAppCloudClient,
+    build_text_payload,
+    iter_incoming_messages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +145,30 @@ async def _run_conversation_turn(
                     text_body=intent.text_body,
                     payload=intent.payload,
                     idempotency_key=idempotency_key,
+                    in_response_to_message_id=incoming.meta_message_id,
+                )
+                if row is not None:
+                    pending_ids.append(row.id)
+
+            if result.register:
+                # Registration is idempotent on conversation_id; build the
+                # confirmation here because it needs the generated human id.
+                grievance, _created = await create_grievance(
+                    session,
+                    contact_id=contact.id,
+                    conversation_id=conversation.id,
+                    context=result.context,
+                )
+                body = msg.REGISTERED.format(grievance_id=grievance.human_id)
+                row = await store_outgoing_pending(
+                    session,
+                    contact_id=contact.id,
+                    conversation_id=conversation.id,
+                    reply_kind="registered",
+                    message_type="text",
+                    text_body=body,
+                    payload=build_text_payload(to=incoming.wa_id, body=body),
+                    idempotency_key=f"{conversation.id}:{incoming.meta_message_id}:registered",
                     in_response_to_message_id=incoming.meta_message_id,
                 )
                 if row is not None:

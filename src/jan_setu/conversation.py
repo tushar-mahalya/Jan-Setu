@@ -28,9 +28,14 @@ from jan_setu.whatsapp import (
 STATE_AWAITING_LOCATION = "awaiting_location"
 STATE_CONFIRMING_LOCATION = "confirming_location"
 STATE_AWAITING_ISSUE = "awaiting_issue"
+STATE_AWAITING_PHOTO = "awaiting_photo"
+STATE_REGISTERED = "registered"
 STATE_EXPIRED = "expired"
 
 INITIAL_STATE = STATE_AWAITING_LOCATION
+
+# Inbound types that count as grievance content while accumulating the issue.
+ISSUE_CONTENT_TYPES = frozenset({"text", "audio", "voice", "image", "video", "document"})
 
 
 @dataclass
@@ -46,6 +51,9 @@ class FsmResult:
     state: str
     context: dict[str, Any]
     intents: list[OutboundIntent] = field(default_factory=list)
+    # When True, the caller registers a grievance from ``context`` and sends the
+    # confirmation (which needs the generated human id). Kept out of the pure FSM.
+    register: bool = False
 
 
 def default_context() -> dict[str, Any]:
@@ -61,10 +69,12 @@ def default_context() -> dict[str, Any]:
         },
         "issue": {
             "status": "awaiting_input",
+            "messages": [],
             "source_message_id": None,
             "text": None,
             "language": None,
         },
+        "photo": {"media_id": None, "mime_type": None, "skipped": None},
     }
 
 
@@ -137,6 +147,32 @@ def _text_intent(wa_id: str, body: str, reply_kind: str) -> OutboundIntent:
     )
 
 
+def _buttons_intent(
+    wa_id: str, body: str, buttons: list[tuple[str, str]], reply_kind: str
+) -> OutboundIntent:
+    return OutboundIntent(
+        reply_kind=reply_kind,
+        message_type="interactive",
+        payload=build_reply_buttons_payload(to=wa_id, body=body, buttons=buttons),
+        text_body=body,
+    )
+
+
+def _ask_issue_intent(wa_id: str) -> OutboundIntent:
+    return _buttons_intent(
+        wa_id, msg.ASK_ISSUE, [(msg.ISSUE_DONE_ID, msg.ISSUE_DONE_TITLE)], "ask_issue"
+    )
+
+
+def _photo_prompt_intent(wa_id: str, body: str, reply_kind: str) -> OutboundIntent:
+    return _buttons_intent(
+        wa_id,
+        body,
+        [(msg.PHOTO_SHARE_ID, msg.PHOTO_SHARE_TITLE), (msg.PHOTO_SKIP_ID, msg.PHOTO_SKIP_TITLE)],
+        reply_kind,
+    )
+
+
 def advance(
     *,
     wa_id: str,
@@ -203,7 +239,7 @@ def advance(
             return FsmResult(
                 state=STATE_AWAITING_ISSUE,
                 context=context,
-                intents=[_text_intent(wa_id, msg.ASK_ISSUE, "ask_issue")],
+                intents=[_ask_issue_intent(wa_id)],
             )
         if token == staged_token and base == msg.CONFIRM_NO_ID:
             context["location"] = default_context()["location"]
@@ -239,11 +275,76 @@ def advance(
         )
 
     if state == STATE_AWAITING_ISSUE:
-        # Next slice consumes the issue. Record the first inbound's id so it is not
-        # silently dropped; send nothing here.
-        if context["issue"].get("source_message_id") is None:
-            context["issue"]["source_message_id"] = inbound.meta_message_id
+        issue = context["issue"]
+        issue.setdefault("messages", [])  # backward-compat for slice-1 conversations
+        base, _ = parse_confirm_reply(inbound.reply_id)
+
+        if base == msg.ISSUE_DONE_ID:
+            if not issue["messages"]:
+                # Done tapped with nothing captured — guard against empty tickets.
+                return FsmResult(
+                    state=STATE_AWAITING_ISSUE,
+                    context=context,
+                    intents=[_text_intent(wa_id, msg.ISSUE_EMPTY, "issue_empty")],
+                )
+            body = f"{msg.ISSUE_RECEIVED}\n\n{msg.PHOTO_PROMPT}"
+            return FsmResult(
+                state=STATE_AWAITING_PHOTO,
+                context=context,
+                intents=[_photo_prompt_intent(wa_id, body, "photo_prompt")],
+            )
+
+        if inbound.message_type in ISSUE_CONTENT_TYPES:
+            issue["messages"].append(
+                {
+                    "message_id": inbound.meta_message_id,
+                    "received_at": inbound.received_at.isoformat(),
+                    "type": inbound.message_type,
+                    "text": inbound.text_body,
+                    "media_id": inbound.media_id,
+                    "mime_type": inbound.media_mime_type,
+                }
+            )
+            if issue.get("source_message_id") is None:
+                issue["source_message_id"] = inbound.meta_message_id
+            # Accumulate silently; the Done button (already shown) ends the step.
+            return FsmResult(state=STATE_AWAITING_ISSUE, context=context, intents=[])
+
+        # Unrecognised input (e.g. a stale button) — ignore.
         return FsmResult(state=STATE_AWAITING_ISSUE, context=context, intents=[])
+
+    if state == STATE_AWAITING_PHOTO:
+        base, _ = parse_confirm_reply(inbound.reply_id)
+
+        if inbound.message_type == "image" and inbound.media_id:
+            context["photo"] = {
+                "media_id": inbound.media_id,
+                "mime_type": inbound.media_mime_type,
+                "skipped": False,
+            }
+            return FsmResult(state=STATE_REGISTERED, context=context, register=True)
+
+        if base == msg.PHOTO_SKIP_ID:
+            context["photo"] = {"media_id": None, "mime_type": None, "skipped": True}
+            return FsmResult(state=STATE_REGISTERED, context=context, register=True)
+
+        if base == msg.PHOTO_SHARE_ID:
+            return FsmResult(
+                state=STATE_AWAITING_PHOTO,
+                context=context,
+                intents=[_text_intent(wa_id, msg.PHOTO_INSTRUCTION, "photo_instruction")],
+            )
+
+        # Anything else while waiting for a photo: re-show the photo choice.
+        return FsmResult(
+            state=STATE_AWAITING_PHOTO,
+            context=context,
+            intents=[_photo_prompt_intent(wa_id, msg.PHOTO_PROMPT, "photo_prompt")],
+        )
+
+    if state == STATE_REGISTERED:
+        # Terminal for this slice; ignore further messages.
+        return FsmResult(state=STATE_REGISTERED, context=context, intents=[])
 
     # Unknown state: do nothing rather than guess.
     return FsmResult(state=state, context=context, intents=[])
