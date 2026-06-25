@@ -13,13 +13,16 @@ import logging
 
 from jan_setu.config import configure_logging, get_settings
 from jan_setu.database import AsyncSessionLocal
+from jan_setu.dispatch import sweep_pending_outbound
 from jan_setu.processing import process_pending_events
+from jan_setu.whatsapp import WhatsAppCloudClient
 
 logger = logging.getLogger(__name__)
 
 
 async def run_worker() -> None:
     settings = get_settings()
+    client = WhatsAppCloudClient(settings)
     logger.info(
         "worker_started",
         extra={
@@ -35,6 +38,16 @@ async def run_worker() -> None:
             except Exception:
                 await session.rollback()
                 logger.exception("worker_iteration_failed")
+
+        if settings.auto_reply_enabled:
+            async with AsyncSessionLocal() as session:
+                try:
+                    await sweep_pending_outbound(
+                        session, settings, client, limit=settings.worker_batch_size
+                    )
+                except Exception:
+                    await session.rollback()
+                    logger.exception("worker_outbound_sweep_failed")
         await asyncio.sleep(settings.worker_poll_seconds)
 
 

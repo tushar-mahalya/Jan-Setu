@@ -19,7 +19,10 @@ class WhatsAppCloudClient:
         self.settings = settings
         self.http_client = http_client
 
-    async def send_text(self, *, to: str, body: str) -> dict[str, Any]:
+    async def send_raw(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST a fully-formed Graph message payload. The conversation engine
+        builds payloads with the ``build_*`` helpers, persists them, then the
+        dispatcher sends them verbatim through here."""
         if not self.settings.whatsapp_access_token or not self.settings.whatsapp_phone_number_id:
             raise WhatsAppClientUnavailable(
                 "WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required."
@@ -30,30 +33,75 @@ class WhatsAppCloudClient:
             f"https://graph.facebook.com/{self.settings.whatsapp_graph_api_version}/"
             f"{self.settings.whatsapp_phone_number_id}/messages"
         )
-        payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": to,
-            "type": "text",
-            "text": {"preview_url": False, "body": body},
-        }
+        headers = {"Authorization": f"Bearer {token}"}
+
         if self.http_client is not None:
-            response = await self.http_client.post(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                json=payload,
-            )
+            response = await self.http_client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             return response.json()
 
         async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as http_client:
-            response = await http_client.post(
-                url,
-                headers={"Authorization": f"Bearer {token}"},
-                json=payload,
-            )
+            response = await http_client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             return response.json()
+
+    async def send_text(self, *, to: str, body: str) -> dict[str, Any]:
+        return await self.send_raw(build_text_payload(to=to, body=body))
+
+    async def send_location_request(self, *, to: str, body: str) -> dict[str, Any]:
+        return await self.send_raw(build_location_request_payload(to=to, body=body))
+
+    async def send_reply_buttons(
+        self, *, to: str, body: str, buttons: list[tuple[str, str]]
+    ) -> dict[str, Any]:
+        return await self.send_raw(build_reply_buttons_payload(to=to, body=body, buttons=buttons))
+
+
+def build_text_payload(*, to: str, body: str) -> dict[str, Any]:
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "text",
+        "text": {"preview_url": False, "body": body},
+    }
+
+
+def build_location_request_payload(*, to: str, body: str) -> dict[str, Any]:
+    """Interactive message with a native "Send location" button."""
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "location_request_message",
+            "body": {"text": body},
+            "action": {"name": "send_location"},
+        },
+    }
+
+
+def build_reply_buttons_payload(
+    *, to: str, body: str, buttons: list[tuple[str, str]]
+) -> dict[str, Any]:
+    """Up to 3 reply buttons. ``buttons`` is a list of (id, title)."""
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "body": {"text": body},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": button_id, "title": title}}
+                    for button_id, title in buttons
+                ]
+            },
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -72,6 +120,10 @@ class IncomingWhatsAppMessage:
     location_name: str | None = None
     location_address: str | None = None
     location_url: str | None = None
+    reply_id: str | None = None
+    interactive_type: str | None = None
+    button_payload: str | None = None
+    context_message_id: str | None = None
 
 
 def verify_meta_signature(
@@ -150,6 +202,30 @@ def _extract_location(
     )
 
 
+def _extract_reply(
+    message: dict[str, Any], message_type: str
+) -> tuple[str | None, str | None, str | None]:
+    """Return (reply_id, interactive_type, button_payload) for tap replies.
+
+    Reply-button and list taps arrive as type ``interactive``; template quick
+    replies arrive as type ``button``. All are normalised to a single
+    ``reply_id`` the FSM can branch on.
+    """
+    if message_type == "interactive":
+        interactive = message.get("interactive", {})
+        if not isinstance(interactive, dict):
+            return None, None, None
+        interactive_type = interactive.get("type")
+        reply = interactive.get(interactive_type, {}) if interactive_type else {}
+        reply_id = reply.get("id") if isinstance(reply, dict) else None
+        return reply_id, interactive_type, None
+    if message_type == "button":
+        button = message.get("button", {})
+        if isinstance(button, dict):
+            return button.get("payload"), "button", button.get("payload")
+    return None, None, None
+
+
 def iter_incoming_messages(payload: dict[str, Any]) -> list[IncomingWhatsAppMessage]:
     messages: list[IncomingWhatsAppMessage] = []
     for entry in payload.get("entry", []):
@@ -172,6 +248,9 @@ def iter_incoming_messages(payload: dict[str, Any]) -> list[IncomingWhatsAppMess
                 latitude, longitude, location_name, location_address, location_url = (
                     _extract_location(message, message_type)
                 )
+                reply_id, interactive_type, button_payload = _extract_reply(message, message_type)
+                context = message.get("context", {})
+                context_message_id = context.get("id") if isinstance(context, dict) else None
                 messages.append(
                     IncomingWhatsAppMessage(
                         wa_id=wa_id,
@@ -188,6 +267,10 @@ def iter_incoming_messages(payload: dict[str, Any]) -> list[IncomingWhatsAppMess
                         location_name=location_name,
                         location_address=location_address,
                         location_url=location_url,
+                        reply_id=reply_id,
+                        interactive_type=interactive_type,
+                        button_payload=button_payload,
+                        context_message_id=context_message_id,
                     )
                 )
     return messages

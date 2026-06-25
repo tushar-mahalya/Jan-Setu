@@ -239,6 +239,25 @@ event left unprocessed (a background task that failed or never ran) and drains i
 in batches, controlled by `WORKER_POLL_SECONDS` and `WORKER_BATCH_SIZE`.
 Re-processing is idempotent. The worker is included in the `services` Docker
 profile, so `docker compose --profile services up -d` starts it alongside the API.
+It also sweeps any outbound reply that was persisted but not yet sent.
+
+## Auto-Reply Conversation Engine
+
+When `AUTO_REPLY_ENABLED=true`, inbound messages drive a guided dialog: greet →
+request the citizen's location (native WhatsApp "Send location" button) →
+reverse-geocode the coordinates → confirm the address with Yes/No buttons → ask
+the citizen to describe their issue. State lives in the `conversations` table;
+each inbound message is consumed exactly once (`fsm_message_consumptions`), and
+replies are persisted before sending so a crash never drops or duplicates them.
+
+### Reverse geocoding (production note)
+
+Reverse geocoding is pluggable (`GEOCODER_PROVIDER`). The default points at the
+**public Nominatim endpoint, which is DEV-ONLY**: the OpenStreetMap usage policy
+caps it at 1 request/second and forbids app/bulk traffic. For production set
+`NOMINATIM_BASE_URL` to a self-hosted Nominatim/Photon (an India OSM extract) or a
+paid provider, and keep the identifying `NOMINATIM_USER_AGENT`. Results are cached
+in `geocode_cache` and calls are globally throttled via `external_rate_limits`.
 
 ## API Authentication
 

@@ -22,21 +22,13 @@ services:
     build: .
     image: jan-setu-api:local
     command: uvicorn jan_setu.main:app --host 0.0.0.0 --port 8000
+    # Load the full .env so container settings never drift from local dev; only
+    # override what must differ inside the compose network (the DB hostname).
+    env_file:
+      - .env
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-jan_setu}
-      POSTGRES_USER: ${POSTGRES_USER:-jan_setu_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jan_setu_dev_password}
-      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-dev_verify_token}
-      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
-      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
-      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
-      WHATSAPP_GRAPH_API_VERSION: ${WHATSAPP_GRAPH_API_VERSION:-v20.0}
-      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-10}
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
@@ -56,17 +48,11 @@ services:
     build: .
     image: jan-setu-api:local
     command: jan-setu-worker
+    env_file:
+      - .env
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-jan_setu}
-      POSTGRES_USER: ${POSTGRES_USER:-jan_setu_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jan_setu_dev_password}
-      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
-      WORKER_BATCH_SIZE: ${WORKER_BATCH_SIZE:-10}
     restart: unless-stopped
     depends_on:
       postgres:

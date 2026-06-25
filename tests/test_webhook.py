@@ -322,3 +322,40 @@ def test_process_pending_events_returns_zero_when_no_events():
         return await process_pending_events(Session(), batch_size=10)
 
     assert anyio.run(run) == 0
+
+
+def test_iter_incoming_messages_extracts_button_reply_and_context():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "911234567890",
+                                    "id": "wamid.btn",
+                                    "type": "interactive",
+                                    "context": {"id": "wamid.confirm-prompt"},
+                                    "interactive": {
+                                        "type": "button_reply",
+                                        "button_reply": {
+                                            "id": "loc_confirm_yes:wamid.loc",
+                                            "title": "हाँ / Yes",
+                                        },
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = iter_incoming_messages(payload)
+
+    assert messages[0].message_type == "interactive"
+    assert messages[0].interactive_type == "button_reply"
+    assert messages[0].reply_id == "loc_confirm_yes:wamid.loc"
+    assert messages[0].context_message_id == "wamid.confirm-prompt"
