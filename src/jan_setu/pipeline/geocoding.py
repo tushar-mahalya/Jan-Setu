@@ -12,7 +12,6 @@ only on lat/lon, and the throttle wait happens outside any lock and any HTTP cal
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any, Protocol
 
 import httpx
@@ -21,8 +20,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.config import Settings
-from jan_setu.database import utc_now
-from jan_setu.models import ExternalRateLimit, GeocodeCache
+from jan_setu.db.models import GeocodeCache
+from jan_setu.pipeline.throttle import reserve_slot
 
 logger = logging.getLogger(__name__)
 
@@ -92,33 +91,6 @@ def get_geocoder(settings: Settings, http_client: httpx.AsyncClient | None = Non
     return NominatimGeocoder(settings, http_client)
 
 
-async def _reserve_slot(session: AsyncSession, provider: str, min_interval: float) -> float:
-    """Reserve the next call slot for ``provider`` and return how long to wait.
-
-    Uses a single row claimed with ``FOR UPDATE`` + compare-and-set so a global
-    >=min_interval spacing holds across all processes. The caller sleeps for the
-    returned duration AFTER this short transaction commits (never under lock).
-    """
-    await session.execute(
-        insert(ExternalRateLimit)
-        .values(provider=provider, next_allowed_at=utc_now())
-        .on_conflict_do_nothing(index_elements=[ExternalRateLimit.provider])
-    )
-    row = (
-        await session.execute(
-            select(ExternalRateLimit)
-            .where(ExternalRateLimit.provider == provider)
-            .with_for_update()
-        )
-    ).scalar_one()
-
-    now = utc_now()
-    slot = max(now, row.next_allowed_at)
-    row.next_allowed_at = slot + timedelta(seconds=min_interval)
-    await session.commit()
-    return max(0.0, (slot - now).total_seconds())
-
-
 async def reverse_geocode_cached(
     session: AsyncSession,
     settings: Settings,
@@ -151,7 +123,7 @@ async def reverse_geocode_cached(
             raw=cached.raw,
         )
 
-    wait = await _reserve_slot(session, provider, settings.geocoder_min_interval_seconds)
+    wait = await reserve_slot(session, provider, settings.geocoder_min_interval_seconds)
     if wait > 0:
         await asyncio.sleep(wait)
 

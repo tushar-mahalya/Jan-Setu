@@ -19,9 +19,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.config import Settings, get_settings
-from jan_setu.database import get_session
-from jan_setu.models import Contact, WhatsAppMessage
-from jan_setu.processing import process_webhook_messages
+from jan_setu.db import get_session
+from jan_setu.db.models import Contact, WhatsAppMessage
+from jan_setu.whatsapp.processing import drive_event
 from jan_setu.repositories import (
     list_contacts,
     list_messages,
@@ -29,7 +29,7 @@ from jan_setu.repositories import (
     store_webhook_event,
 )
 from jan_setu.schemas import ContactRead, MessageRead, SendTextRequest, SendTextResponse
-from jan_setu.whatsapp import (
+from jan_setu.whatsapp.client import (
     WhatsAppClientUnavailable,
     WhatsAppCloudClient,
     iter_incoming_messages,
@@ -41,7 +41,7 @@ router = APIRouter()
 
 
 def is_development_environment(environment: str) -> bool:
-    return environment.lower() in {"development", "dev", "local", "test", "testing"}
+    return environment.lower() in {"development", "test"}
 
 
 def require_api_key(
@@ -209,13 +209,13 @@ async def receive_webhook(
         )
 
     # Persist the raw event and acknowledge Meta immediately; the actual message
-    # storage and (future) complaint pipeline run off the request path so a slow
-    # or failing processor never causes Meta to retry or disable the webhook.
+    # storage and complaint pipeline run off the request path so a slow or
+    # failing processor never causes Meta to retry or disable the webhook.
     incoming_messages = iter_incoming_messages(payload)
-    event = await store_webhook_event(session, payload=payload, signature_valid=True)
+    event = await store_webhook_event(session, payload=payload, signature_valid=signature_valid)
     await session.commit()
 
-    background_tasks.add_task(process_webhook_messages, event.id, incoming_messages)
+    background_tasks.add_task(drive_event, app_settings, request.app.state.http_client, event.id)
 
     messages_seen = len(incoming_messages)
     logger.info(

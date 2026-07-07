@@ -104,6 +104,38 @@ def build_reply_buttons_payload(
     }
 
 
+def build_document_button_payload(
+    *,
+    to: str,
+    header_media_id: str,
+    header_filename: str,
+    body: str,
+    buttons: list[tuple[str, str]],
+) -> dict[str, Any]:
+    """A reply-buttons message with a document (the PDF summary) as its header,
+    so the citizen sees the complaint PDF and Confirm/Cancel in one bubble."""
+    return {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "interactive",
+        "interactive": {
+            "type": "button",
+            "header": {
+                "type": "document",
+                "document": {"id": header_media_id, "filename": header_filename},
+            },
+            "body": {"text": body},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": button_id, "title": title}}
+                    for button_id, title in buttons
+                ]
+            },
+        },
+    }
+
+
 @dataclass(frozen=True)
 class IncomingWhatsAppMessage:
     wa_id: str

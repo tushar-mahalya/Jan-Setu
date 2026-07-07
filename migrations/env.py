@@ -9,8 +9,8 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from jan_setu.config import get_settings
-from jan_setu.database import Base
-import jan_setu.models  # noqa: F401
+from jan_setu.db import Base
+import jan_setu.db.models  # noqa: F401
 
 config = context.config
 

@@ -1,16 +1,23 @@
 from datetime import datetime, timezone
 
-from jan_setu import copy as msg
-from jan_setu.conversation import (
+from jan_setu.whatsapp import copy as msg
+from jan_setu.whatsapp.conversation import (
+    CONFIRM_GRV_YES_ID,
+    PHOTO_CONTINUE_ID,
+    STATE_AWAITING_CONFIRMATION,
     STATE_AWAITING_ISSUE,
     STATE_AWAITING_LOCATION,
     STATE_AWAITING_PHOTO,
     STATE_CONFIRMING_LOCATION,
-    STATE_REGISTERED,
+    STATE_DONE,
+    STATE_PHOTO_MISMATCH,
+    STATE_PROCESSING,
     advance,
+    is_status_query,
+    is_verification_code,
 )
-from jan_setu.geocoding import ReverseGeocode
-from jan_setu.whatsapp import IncomingWhatsAppMessage
+from jan_setu.pipeline.geocoding import ReverseGeocode
+from jan_setu.whatsapp.client import IncomingWhatsAppMessage
 
 
 def _inbound(**overrides) -> IncomingWhatsAppMessage:
@@ -237,10 +244,10 @@ def test_photo_share_sends_instruction():
     )
     assert result.state == STATE_AWAITING_PHOTO
     assert _kinds(result) == ["photo_instruction"]
-    assert result.register is False
+    assert result.action is None
 
 
-def test_photo_image_registers():
+def test_photo_image_starts_pipeline():
     context = _confirming_context()
     image = _inbound(
         meta_message_id="wamid.img", message_type="image", text_body=None, media_id="img-99"
@@ -248,13 +255,13 @@ def test_photo_image_registers():
     result = advance(
         wa_id="911234567890", state=STATE_AWAITING_PHOTO, context=context, inbound=image
     )
-    assert result.state == STATE_REGISTERED
-    assert result.register is True
+    assert result.state == STATE_PROCESSING
+    assert result.action == "start_pipeline"
     assert result.context["photo"]["media_id"] == "img-99"
-    assert result.intents == []  # confirmation is sent by the caller (needs the id)
+    assert _kinds(result) == ["processing_wait"]
 
 
-def test_photo_skip_registers_without_photo():
+def test_photo_skip_starts_pipeline_without_photo():
     context = _confirming_context()
     reply = _inbound(
         meta_message_id="wamid.skip",
@@ -265,23 +272,113 @@ def test_photo_skip_registers_without_photo():
     result = advance(
         wa_id="911234567890", state=STATE_AWAITING_PHOTO, context=context, inbound=reply
     )
-    assert result.state == STATE_REGISTERED
-    assert result.register is True
+    assert result.state == STATE_PROCESSING
+    assert result.action == "start_pipeline"
     assert result.context["photo"]["skipped"] is True
     assert result.context["photo"]["media_id"] is None
 
 
-def test_registered_is_terminal():
+def test_processing_state_replies_still_processing_and_takes_no_action():
     context = _confirming_context()
     result = advance(
         wa_id="911234567890",
-        state=STATE_REGISTERED,
+        state=STATE_PROCESSING,
+        context=context,
+        inbound=_inbound(text_body="are you done?"),
+    )
+    assert result.state == STATE_PROCESSING
+    assert result.action is None
+    assert _kinds(result) == ["still_processing"]
+
+
+def test_photo_mismatch_new_photo_triggers_recheck():
+    context = _confirming_context()
+    context["draft"] = {"grievance_id": "draft-1", "recheck_count": 0}
+    image = _inbound(
+        meta_message_id="wamid.img2", message_type="image", text_body=None, media_id="img-100"
+    )
+    result = advance(
+        wa_id="911234567890", state=STATE_PHOTO_MISMATCH, context=context, inbound=image
+    )
+    assert result.state == STATE_PROCESSING
+    assert result.action == "recheck_photo"
+    assert result.context["draft"]["recheck_count"] == 1
+    assert result.context["photo"]["media_id"] == "img-100"
+
+
+def test_photo_mismatch_continue_proceeds_without_photo():
+    context = _confirming_context()
+    context["draft"] = {"grievance_id": "draft-1", "recheck_count": 1}
+    reply = _inbound(
+        meta_message_id="wamid.cont",
+        message_type="interactive",
+        text_body=None,
+        reply_id=PHOTO_CONTINUE_ID,
+    )
+    result = advance(
+        wa_id="911234567890", state=STATE_PHOTO_MISMATCH, context=context, inbound=reply
+    )
+    assert result.state == STATE_PROCESSING
+    assert result.action == "proceed_without_photo"
+
+
+def test_awaiting_confirmation_confirm_finalizes():
+    context = _confirming_context()
+    context["draft"] = {"grievance_id": "draft-1", "recheck_count": 0}
+    reply = _inbound(
+        meta_message_id="wamid.conf",
+        message_type="interactive",
+        text_body=None,
+        reply_id=f"{CONFIRM_GRV_YES_ID}:draft-1",
+    )
+    result = advance(
+        wa_id="911234567890", state=STATE_AWAITING_CONFIRMATION, context=context, inbound=reply
+    )
+    assert result.state == STATE_DONE
+    assert result.action == "finalize"
+    assert result.close is True
+
+
+def test_awaiting_confirmation_stale_token_does_nothing():
+    context = _confirming_context()
+    context["draft"] = {"grievance_id": "draft-2", "recheck_count": 0}
+    reply = _inbound(
+        meta_message_id="wamid.conf",
+        message_type="interactive",
+        text_body=None,
+        reply_id=f"{CONFIRM_GRV_YES_ID}:draft-1",  # stale draft id
+    )
+    result = advance(
+        wa_id="911234567890", state=STATE_AWAITING_CONFIRMATION, context=context, inbound=reply
+    )
+    assert result.state == STATE_AWAITING_CONFIRMATION
+    assert result.action is None
+
+
+def test_done_is_terminal():
+    context = _confirming_context()
+    result = advance(
+        wa_id="911234567890",
+        state=STATE_DONE,
         context=context,
         inbound=_inbound(text_body="anything"),
     )
-    assert result.state == STATE_REGISTERED
+    assert result.state == STATE_DONE
     assert result.intents == []
-    assert result.register is False
+    assert result.action is None
+
+
+def test_is_verification_code_matches_expected_shape():
+    assert is_verification_code("JS-AB12CD")
+    assert is_verification_code("js-ab12cd")
+    assert not is_verification_code("hello")
+    assert not is_verification_code(None)
+
+
+def test_is_status_query_matches_keyword_only():
+    assert is_status_query("status")
+    assert is_status_query("  Status  ")
+    assert not is_status_query("what is the status of my road")
 
 
 def test_new_contact_sharing_location_first_greets_then_confirms():

@@ -89,3 +89,68 @@ REGISTERED = (
     "Your complaint is registered with Jan Setu.\nReference ID: {grievance_id}\n"
     "We will send you a confirmation report."
 )
+
+# --- Processing pipeline (STT + classification + image check + PDF confirm) ---
+
+PROCESSING_WAIT = (
+    "धन्यवाद! हम आपकी शिकायत की जांच कर रहे हैं। कृपया कुछ पल प्रतीक्षा करें।\n\n"
+    "Thank you! We are processing your complaint. Please wait a moment."
+)
+
+STILL_PROCESSING = (
+    "हम अभी भी आपकी शिकायत की जांच कर रहे हैं। कृपया प्रतीक्षा करें।\n\n"
+    "We are still processing your complaint. Please wait."
+)
+
+# Sent alongside the generated PDF document, with Confirm/Cancel buttons.
+PDF_CONFIRM = (
+    "कृपया नीचे दी गई शिकायत का विवरण जांचें। पुष्टि करने पर यह संबंधित विभाग को भेज दी "
+    "जाएगी।\n\n"
+    "Please verify your complaint details below. Confirming will send it to the "
+    "concerned department.\n\n{summary}"
+)
+CONFIRM_GRV_YES_TITLE = "पुष्टि करें/Confirm"
+CONFIRM_GRV_NO_TITLE = "रद्द करें/Cancel"
+
+# Sent when the LLM image-match check flags the photo as not matching the text.
+IMAGE_MISMATCH_PROMPT = (
+    "लगता है कि भेजी गई फ़ोटो आपके विवरण से मेल नहीं खाती। कृपया एक और फ़ोटो भेजें, या "
+    "बिना फ़ोटो के आगे बढ़ें।{note}\n\n"
+    "The photo doesn't seem to match your description. Please send another photo, "
+    "or continue without one.{note}"
+)
+PHOTO_CONTINUE_TITLE = "जारी रखें/Continue"
+
+REGISTERED_FINAL = (
+    "आपकी शिकायत जन सेतु में दर्ज हो गई है।\nपंजीकरण क्रमांक: {grievance_id}\n\n"
+    "Your complaint is registered with Jan Setu.\nReference ID: {grievance_id}"
+)
+
+DUPLICATE_NOTE = (
+    "\n\n{count} अन्य लोगों ने भी यही समस्या दर्ज की है।\n\n"
+    "{count} other people have also reported this issue."
+)
+
+CANCELLED = (
+    "आपकी शिकायत रद्द कर दी गई है। आप कभी भी नई शिकायत दर्ज कर सकते हैं।\n\n"
+    "Your complaint has been cancelled. You may start a new one anytime."
+)
+
+# --- Status query ("status") -------------------------------------------------
+
+STATUS_HEADER = "आपकी हाल की शिकायतें:\n\nYour recent complaints:"
+STATUS_LINE = "\n{human_id} — {category} — {status}"
+STATUS_EMPTY = "आपकी कोई दर्ज शिकायत नहीं मिली।\n\nWe couldn't find any complaints registered by you."
+
+# --- Reverse-OTP verification -------------------------------------------------
+
+VERIFY_SUCCESS = (
+    "सत्यापन सफल! अब आप जन सेतु वेब ऐप में लॉग इन कर सकते हैं।\n\n"
+    "Verification successful! You can now log in to the Jan Setu web app."
+)
+VERIFY_INVALID = (
+    "यह सत्यापन कोड मान्य नहीं है या समाप्त हो गया है। कृपया वेब ऐप से एक नया कोड प्राप्त "
+    "करें।\n\n"
+    "This verification code is invalid or has expired. Please request a new one "
+    "from the web app."
+)

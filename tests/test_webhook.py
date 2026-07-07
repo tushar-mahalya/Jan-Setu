@@ -10,9 +10,8 @@ from sqlalchemy.dialects import postgresql
 
 from jan_setu.config import get_settings
 from jan_setu.main import app
-from jan_setu.processing import process_pending_events
 from jan_setu.repositories import store_incoming_messages, upsert_contact
-from jan_setu.whatsapp import (
+from jan_setu.whatsapp.client import (
     IncomingWhatsAppMessage,
     WhatsAppCloudClient,
     iter_incoming_messages,
@@ -304,24 +303,6 @@ def test_v1_endpoint_requires_api_key_config_outside_development(monkeypatch):
         response = client.get("/v1/contacts")
 
     assert response.status_code == 503
-
-
-def test_process_pending_events_returns_zero_when_no_events():
-    class Result:
-        def scalars(self):
-            return self
-
-        def all(self):
-            return []
-
-    class Session:
-        async def execute(self, statement):
-            return Result()
-
-    async def run():
-        return await process_pending_events(Session(), batch_size=10)
-
-    assert anyio.run(run) == 0
 
 
 def test_iter_incoming_messages_extracts_button_reply_and_context():

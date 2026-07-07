@@ -14,10 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.config import Settings
-from jan_setu.database import utc_now
-from jan_setu.models import Conversation, WhatsAppMessage
+from jan_setu.db import utc_now
+from jan_setu.db.models import Conversation, WhatsAppMessage
 from jan_setu.repositories import claim_outbound, fetch_sweepable_outbound, mark_outbound
-from jan_setu.whatsapp import WhatsAppCloudClient, WhatsAppClientUnavailable
+from jan_setu.whatsapp.client import WhatsAppCloudClient, WhatsAppClientUnavailable
 
 logger = logging.getLogger(__name__)
 

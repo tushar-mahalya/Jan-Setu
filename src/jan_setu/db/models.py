@@ -15,7 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from jan_setu.database import Base, utc_now
+from jan_setu.db.session import Base, utc_now
 
 
 class TimestampMixin:
@@ -162,9 +162,16 @@ class ExternalRateLimit(Base):
 
 class Grievance(TimestampMixin, Base):
     """A registered citizen complaint. At most one per conversation (the unique
-    ``conversation_id`` makes registration idempotent). ``human_id`` is the
+    ``conversation_id`` makes WhatsApp registration idempotent; web-sourced
+    grievances have ``conversation_id is None``). ``human_id`` is the
     citizen-facing ticket number (e.g. ``JS-20260625-00001``) from a Postgres
-    sequence; the UUID ``id`` is the internal key."""
+    sequence; the UUID ``id`` is the internal key.
+
+    ``status`` lifecycle: draft -> processing -> awaiting_confirmation ->
+    registered -> (dispatching -> submitted) | pending_window -> dispatching ->
+    submitted | duplicate | cancelled | dispatch_failed. Every transition is
+    also appended to ``grievance_events`` for the audit timeline.
+    """
 
     __tablename__ = "grievances"
 
@@ -179,13 +186,124 @@ class Grievance(TimestampMixin, Base):
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="SET NULL"), unique=True
     )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="whatsapp")
+
     location_latitude: Mapped[float | None] = mapped_column(Float)
     location_longitude: Mapped[float | None] = mapped_column(Float)
     location_address: Mapped[str | None] = mapped_column(Text)
-    issue_message_ids: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
-    issue_text: Mapped[str | None] = mapped_column(Text)  # filled later by the STT slice
+
+    # Raw accumulated issue messages from the FSM context (id/type/text/media_id/
+    # mime_type per message) — the pipeline's transcribe+combine stage reads this
+    # directly rather than re-joining whatsapp_messages.
+    issue_messages: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    issue_text: Mapped[str | None] = mapped_column(Text)  # combined English text (typed + STT)
+    source_language: Mapped[str | None] = mapped_column(String(16))
     photo_media_id: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="registered")
+    photo_path: Mapped[str | None] = mapped_column(Text)
+    audio_paths: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    pdf_path: Mapped[str | None] = mapped_column(Text)
+
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    category: Mapped[str | None] = mapped_column(String(64))
+    department_key: Mapped[str | None] = mapped_column(String(64))
+    priority: Mapped[str | None] = mapped_column(String(16))
+    term: Mapped[str | None] = mapped_column(String(16))
+    confidence: Mapped[float | None] = mapped_column(Float)
+    image_match_status: Mapped[str | None] = mapped_column(String(16))
+    flags: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+
+    report_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    duplicate_of_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grievances.id", ondelete="SET NULL"), index=True
+    )
+    window_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    dispatch_ref: Mapped[str | None] = mapped_column(String(255))
+    dispatch_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    drafted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_grievances_status", "status"),
+        Index("ix_grievances_created_at", "created_at"),
+        Index("ix_grievances_category_window", "category", "window_expires_at"),
+        Index("ix_grievances_lat_lon", "location_latitude", "location_longitude"),
+    )
+
+
+class GrievanceEvent(Base):
+    """Append-only status-history audit trail for one grievance. Drives both the
+    web complaint-detail timeline and the WhatsApp ``status`` reply."""
+
+    __tablename__ = "grievance_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    grievance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("grievances.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class User(TimestampMixin, Base):
+    """A web-app account. ``phone`` is the WhatsApp-registered number (== the
+    ``wa_id`` of the linked ``Contact``) and is the sole login identifier —
+    there is no password; identity is proven by the reverse-OTP flow."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    phone: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL"), unique=True
+    )
+    name: Mapped[str | None] = mapped_column(String(255))
+
+
+class PhoneVerification(Base):
+    """A reverse-OTP challenge: the web app shows ``code`` to the user, who
+    sends it TO the WhatsApp bot (we cannot message them first). ``code_hash``
+    is sha256 of the code — these are short-lived random nonces, not passwords,
+    so a fast hash is the correct tool, not bcrypt/argon2."""
+
+    __tablename__ = "phone_verifications"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    __table_args__ = (Index("ix_phone_verifications_phone_created_at", "phone", "created_at"),)
+
+
+class RefreshToken(Base):
+    """A rotating refresh token. ``token_hash`` is sha256 of the raw token sent
+    to the client in an httpOnly cookie; the raw value is never stored."""
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class WebhookEvent(Base):
@@ -199,3 +317,9 @@ class WebhookEvent(Base):
         DateTime(timezone=True), default=utc_now, index=True
     )
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Lease fields for the unified drive_event claim (the api background task
+    # AND the worker sweep both claim through this row-lease, same pattern as
+    # outbound sends, so a race between them can no longer drop an event's FSM
+    # turns silently).
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

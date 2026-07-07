@@ -45,3 +45,78 @@ class SendTextRequest(BaseModel):
 class SendTextResponse(BaseModel):
     provider_response: dict[str, Any]
     stored_message: MessageRead
+
+
+# --- Auth ------------------------------------------------------------------
+
+
+class RequestCodeRequest(BaseModel):
+    phone: str = Field(min_length=5, max_length=32)
+
+
+class RequestCodeResponse(BaseModel):
+    verification_id: UUID
+    code: str
+    wa_link: str
+
+
+class AuthStatusResponse(BaseModel):
+    status: str  # "pending" | "verified" | "expired"
+    access_token: str | None = None
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+
+
+# --- Grievances --------------------------------------------------------------
+
+
+class GrievanceEventRead(BaseModel):
+    status: str
+    note: str | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GrievanceSummary(BaseModel):
+    id: UUID
+    human_id: str
+    category: str | None
+    status: str
+    priority: str | None
+    source: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GrievanceDraftResponse(BaseModel):
+    id: UUID
+    human_id: str
+    status: str
+    category: str | None
+    department_name: str | None
+    priority: str | None
+    term: str | None
+    confidence: float | None
+    address: str | None
+    issue_text: str | None
+    image_match_status: str | None
+    flags: list[str]
+    pdf_url: str | None
+
+
+class GrievanceDetail(GrievanceSummary):
+    address: str | None
+    issue_text: str | None
+    department_key: str | None
+    term: str | None
+    confidence: float | None
+    image_match_status: str | None
+    flags: list[Any]
+    report_count: int
+    dispatch_ref: str | None
+    events: list[GrievanceEventRead]
+    pdf_url: str | None

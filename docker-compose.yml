@@ -29,6 +29,9 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
@@ -53,10 +56,22 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
+    profiles:
+      - services
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "127.0.0.1:8025:8025"
+      - "127.0.0.1:1025:1025"
+    restart: unless-stopped
     profiles:
       - services
 
@@ -70,3 +85,4 @@ services:
 
 volumes:
   postgres_data:
+  uploads:

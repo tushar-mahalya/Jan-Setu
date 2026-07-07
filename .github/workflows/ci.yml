@@ -96,10 +96,35 @@ jobs:
       - name: Check models match migrations (no drift)
         run: uv run alembic check
 
+  frontend:
+    name: Frontend (build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
   ci-success:
     name: CI success
     if: always()
-    needs: [lint, test, migrations]
+    needs: [lint, test, migrations, frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job failed
@@ -107,4 +132,4 @@ jobs:
         run: exit 1
 
       - name: All checks passed
-        run: echo "lint, test, and migration checks all passed"
+        run: echo "lint, test, migration, and frontend checks all passed"

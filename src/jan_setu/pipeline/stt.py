@@ -1,0 +1,74 @@
+"""Speech-to-text via Sarvam AI's ``saaras`` model.
+
+``mode=translate`` is used deliberately: the owner wants English-only records
+(PDF, classification, department dispatch) regardless of the citizen's spoken
+language; the detected language is kept only as metadata.
+"""
+
+import asyncio
+import logging
+import mimetypes
+from dataclasses import dataclass
+
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from jan_setu.config import Settings
+from jan_setu.pipeline.throttle import reserve_slot
+
+logger = logging.getLogger(__name__)
+
+# The Sarvam REST endpoint rejects clips longer than this; longer voice notes
+# would need the batch API (not implemented — out of scope for this pipeline).
+MAX_CLIP_SECONDS = 30
+
+
+@dataclass(frozen=True)
+class TranscriptionResult:
+    ok: bool
+    text: str | None = None
+    detected_language: str | None = None
+
+
+async def transcribe_clip(
+    session: AsyncSession,
+    settings: Settings,
+    http_client: httpx.AsyncClient,
+    *,
+    audio_bytes: bytes,
+    mime_type: str,
+) -> TranscriptionResult:
+    """Transcribe (and translate to English) one voice clip. Never raises —
+    failures degrade to ``ok=False`` so the pipeline can continue with
+    whatever other text the user provided."""
+    if not settings.sarvam_api_key:
+        logger.warning("sarvam_not_configured")
+        return TranscriptionResult(ok=False)
+
+    wait = await reserve_slot(session, "sarvam", settings.sarvam_min_interval_seconds)
+    if wait > 0:
+        await asyncio.sleep(wait)
+
+    extension = mimetypes.guess_extension(mime_type) or ".ogg" if mime_type else ".ogg"
+    filename = f"clip{extension}"
+    files = {"file": (filename, audio_bytes, mime_type)}
+    data = {"model": settings.sarvam_model, "mode": "translate"}
+    headers = {"api-subscription-key": settings.sarvam_api_key.get_secret_value()}
+    url = f"{settings.sarvam_base_url.rstrip('/')}/speech-to-text"
+
+    try:
+        response = await http_client.post(
+            url, headers=headers, data=data, files=files, timeout=settings.sarvam_timeout_seconds
+        )
+        response.raise_for_status()
+        body = response.json()
+    except (httpx.HTTPError, ValueError):
+        logger.warning("sarvam_transcription_failed")
+        return TranscriptionResult(ok=False)
+
+    transcript = body.get("transcript")
+    if not transcript:
+        return TranscriptionResult(ok=False)
+    return TranscriptionResult(
+        ok=True, text=transcript, detected_language=body.get("language_code")
+    )

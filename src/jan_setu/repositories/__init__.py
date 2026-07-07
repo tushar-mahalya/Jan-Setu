@@ -1,0 +1,100 @@
+"""Data-access layer, split by domain (see individual submodules). Re-exported
+here so callers use a single stable import surface: ``from jan_setu.repositories
+import X`` regardless of which submodule ``X`` actually lives in.
+"""
+
+from jan_setu.repositories.contacts import get_contact, list_contacts, upsert_contact
+from jan_setu.repositories.conversations import (
+    annotate_consumption,
+    claim_inbound,
+    lock_contact_and_get_conversation,
+    upsert_conversation_state,
+)
+from jan_setu.repositories.grievances import (
+    add_grievance_event,
+    create_draft_grievance,
+    fetch_expired_windows,
+    fetch_stuck_dispatching,
+    fetch_stuck_processing,
+    find_dedup_candidates,
+    get_grievance,
+    list_grievance_events,
+    list_grievances_for_contact,
+    list_grievances_for_user,
+    set_grievance_fields,
+)
+from jan_setu.repositories.messages import (
+    StoredIncomingMessage,
+    claim_outbound,
+    fetch_sweepable_outbound,
+    list_messages,
+    mark_outbound,
+    store_incoming_messages,
+    store_outgoing_message,
+    store_outgoing_pending,
+)
+from jan_setu.repositories.users import (
+    consume_verification,
+    count_recent_verifications,
+    create_phone_verification,
+    create_refresh_token,
+    find_active_refresh_token,
+    find_pending_verification_by_code_hash,
+    get_phone_verification,
+    get_user,
+    get_user_by_contact_id,
+    mark_verification_verified,
+    revoke_refresh_token,
+    upsert_user_for_verified_phone,
+)
+from jan_setu.repositories.webhook_events import (
+    claim_event,
+    fetch_unprocessed_event_ids,
+    mark_event_processed,
+    store_webhook_event,
+)
+
+__all__ = [
+    "StoredIncomingMessage",
+    "add_grievance_event",
+    "annotate_consumption",
+    "claim_event",
+    "claim_inbound",
+    "claim_outbound",
+    "consume_verification",
+    "count_recent_verifications",
+    "create_draft_grievance",
+    "create_phone_verification",
+    "create_refresh_token",
+    "fetch_expired_windows",
+    "fetch_stuck_dispatching",
+    "fetch_stuck_processing",
+    "fetch_sweepable_outbound",
+    "fetch_unprocessed_event_ids",
+    "find_active_refresh_token",
+    "find_dedup_candidates",
+    "find_pending_verification_by_code_hash",
+    "get_contact",
+    "get_grievance",
+    "get_phone_verification",
+    "get_user",
+    "get_user_by_contact_id",
+    "list_contacts",
+    "list_grievance_events",
+    "list_grievances_for_contact",
+    "list_grievances_for_user",
+    "list_messages",
+    "lock_contact_and_get_conversation",
+    "mark_event_processed",
+    "mark_outbound",
+    "mark_verification_verified",
+    "revoke_refresh_token",
+    "set_grievance_fields",
+    "store_incoming_messages",
+    "store_outgoing_message",
+    "store_outgoing_pending",
+    "store_webhook_event",
+    "upsert_contact",
+    "upsert_conversation_state",
+    "upsert_user_for_verified_phone",
+]

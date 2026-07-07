@@ -2,10 +2,21 @@
 
 FastAPI backend for Jan Setu WhatsApp Business send/receive flows.
 
+## Features
+
+- WhatsApp Business send/receive flows with an auto-reply conversation engine
+- A React + TypeScript citizen web portal with reverse-OTP WhatsApp-based login
+- An LLM-driven complaint pipeline: Sarvam speech-to-text, OpenRouter-based
+  classification, and image-match checking via free models
+- A dedup window for non-priority complaints (priority categories skip it)
+- Department dispatch via a mock API or SMTP (MailHog locally)
+
 ## What Runs Locally
 
 - `api`: FastAPI app on `http://localhost:8000`
 - `postgres`: local PostgreSQL database on port `5432`
+- `mailhog`: local SMTP catcher with a web UI on `http://localhost:8025`, used
+  when `DISPATCHER=smtp`
 - `tunnel`: optional Cloudflare tunnel for WhatsApp webhook testing
 
 ## First-Time Setup
@@ -165,6 +176,35 @@ The API will still be available at:
 ```text
 http://localhost:8000/docs
 ```
+
+## Local End-to-End Verification
+
+To exercise the full stack locally (database, mail catcher, API, worker, and
+the web frontend) in one pass:
+
+```sh
+docker compose up -d postgres mailhog
+uv run alembic upgrade head
+uv run pytest -q
+uv run pre-commit run --all-files
+```
+
+Start the API and worker (in separate terminals):
+
+```sh
+uv run jan-setu-api
+uv run jan-setu-worker
+```
+
+Start the frontend:
+
+```sh
+cd frontend && npm install && npm run dev
+```
+
+Open the printed local URL for the citizen web portal. When
+`DISPATCHER=smtp`, dispatched priority-complaint emails can be viewed in the
+MailHog UI at `http://localhost:8025`.
 
 ## Database Migrations
 
