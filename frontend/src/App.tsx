@@ -1,48 +1,48 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { restoreSession } from "./api/client";
 import { useAuth } from "./auth/AuthContext";
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import NewComplaint from "./pages/NewComplaint";
-import ComplaintDetail from "./pages/ComplaintDetail";
+import Landing from "./pages/Landing";
+import { LoadingState } from "./components/AppShell";
+import AuthenticatedShell from "./components/AuthenticatedShell";
+
+const About = lazy(() => import("./pages/About"));
+const Login = lazy(() => import("./pages/Login"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const NewComplaint = lazy(() => import("./pages/NewComplaint"));
+const ComplaintDetail = lazy(() => import("./pages/ComplaintDetail"));
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
-  return <>{children}</>;
+  return <AuthenticatedShell>{children}</AuthenticatedShell>;
 }
 
 export default function App() {
-  const auth = useAuth();
+  const { login } = useAuth();
   const [isRestoring, setIsRestoring] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     restoreSession().then((token) => {
       if (cancelled) return;
-      if (token) auth.login(token);
+      if (token) login(token);
       setIsRestoring(false);
     });
     return () => {
       cancelled = true;
     };
-    // Only ever attempt this once, on app boot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [login]);
 
-  if (isRestoring) {
-    return (
-      <div className="boot-splash">
-        <p className="boot-splash-mark">Jan-Setu</p>
-      </div>
-    );
-  }
+  if (isRestoring) return <LoadingState />;
 
   return (
-    <Routes>
+    <Suspense fallback={<LoadingState />}>
+      <Routes>
+      <Route path="/" element={<Landing />} />
+      <Route path="/about" element={<About />} />
       <Route path="/login" element={<Login />} />
       <Route
         path="/dashboard"
@@ -68,8 +68,8 @@ export default function App() {
           </RequireAuth>
         }
       />
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   );
 }

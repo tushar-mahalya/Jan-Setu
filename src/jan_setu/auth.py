@@ -70,6 +70,16 @@ def hash_code(code: str) -> str:
     return hashlib.sha256(code.strip().upper().encode("utf-8")).hexdigest()
 
 
+def normalize_phone(phone: str) -> str:
+    """Return the canonical Meta WhatsApp ID for Indian mobile numbers."""
+    digits = "".join(character for character in phone if character.isdigit())
+    if len(digits) == 10:
+        return f"91{digits}"
+    if len(digits) == 12 and digits.startswith("91"):
+        return digits
+    return digits
+
+
 def wa_deep_link(settings: Settings, code: str) -> str:
     number = settings.public_wa_number or ""
     return f"https://wa.me/{number}?text={quote(code)}"
@@ -80,6 +90,7 @@ async def create_verification(
 ) -> tuple[str, str]:
     """Returns (verification_id, plaintext_code). Raises RateLimitExceeded if
     this phone has requested too many codes in the last hour."""
+    phone = normalize_phone(phone)
     since = utc_now() - timedelta(hours=1)
     if (
         await count_recent_verifications(session, phone=phone, since=since)
@@ -103,10 +114,12 @@ async def verify_code_from_whatsapp(
     verification = await find_pending_verification_by_code_hash(
         session, code_hash=hash_code(code_text)
     )
-    if verification is None or verification.phone != wa_id:
+    if verification is None or verification.phone != normalize_phone(wa_id):
         return msg.VERIFY_INVALID
 
-    user = await upsert_user_for_verified_phone(session, phone=wa_id, contact_id=contact_id)
+    user = await upsert_user_for_verified_phone(
+        session, phone=normalize_phone(wa_id), contact_id=contact_id
+    )
     await mark_verification_verified(session, verification_id=verification.id, user_id=user.id)
     return msg.VERIFY_SUCCESS
 

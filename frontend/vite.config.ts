@@ -1,8 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// https://vite.dev/config/
+// Keep root-relative URLs by default. Set VITE_ASSET_BASE (for example,
+// /portal/) only when serving the built application below a URL prefix.
+const assetBase = process.env.VITE_ASSET_BASE || "/";
+
 export default defineConfig({
+  base: assetBase,
   plugins: [react()],
   server: {
     port: 5173,

@@ -1,75 +1,21 @@
-import { Link, useNavigate } from "react-router-dom";
+import type { CSSProperties } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet, apiPostEmpty } from "../api/client";
+import { apiGet } from "../api/client";
 import type { GrievanceSummary } from "../api/types";
 import StatusChip from "../components/StatusChip";
-import { useAuth } from "../auth/AuthContext";
+
+function categoryLetter(category: string | null) {
+  return (category || "?").trim().charAt(0).toUpperCase();
+}
 
 export default function Dashboard() {
-  const navigate = useNavigate();
-  const auth = useAuth();
-
-  const grievancesQuery = useQuery({
-    queryKey: ["grievances"],
-    queryFn: () => apiGet<GrievanceSummary[]>("/api/grievances?limit=20&offset=0"),
-  });
-
-  const handleLogout = async () => {
-    try {
-      await apiPostEmpty("/auth/logout");
-    } finally {
-      auth.logout();
-      navigate("/login", { replace: true });
-    }
-  };
-
-  return (
-    <main className="page">
-      <header className="page__header">
-        <div>
-          <span className="eyebrow">Jan-Setu Citizen Portal</span>
-          <h1>Your Complaints</h1>
-        </div>
-        <div className="page__header-actions">
-          <Link to="/complaints/new" className="btn btn--primary">
-            + New Complaint
-          </Link>
-          <button type="button" className="btn-link" onClick={handleLogout}>
-            Log out
-          </button>
-        </div>
-      </header>
-
-      {grievancesQuery.isLoading && (
-        <div className="complaint-list">
-          <div className="skeleton-row" />
-          <div className="skeleton-row" />
-          <div className="skeleton-row" />
-        </div>
-      )}
-
-      {grievancesQuery.isError && <p className="field-error">Could not load your complaints. Try refreshing.</p>}
-
-      {grievancesQuery.data && grievancesQuery.data.length === 0 && (
-        <p className="empty-state">No complaints yet. File your first one above.</p>
-      )}
-
-      {grievancesQuery.data && grievancesQuery.data.length > 0 && (
-        <ul className="complaint-list">
-          {grievancesQuery.data.map((item) => (
-            <li key={item.id}>
-              <Link to={`/complaints/${item.id}`} className="complaint-row">
-                <span className="complaint-row__id mono">{item.human_id}</span>
-                <span className="complaint-row__category">{item.category ?? "Uncategorized"}</span>
-                <StatusChip status={item.status} />
-                <span className="complaint-row__date">
-                  {new Date(item.created_at).toLocaleDateString(undefined, { dateStyle: "medium" })}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
-  );
+  const query = useQuery({ queryKey: ["grievances"], queryFn: () => apiGet<GrievanceSummary[]>("/api/grievances?limit=20&offset=0") });
+  return <div className="app-page dashboard-page">
+    <header className="app-page__header"><div><span className="app-kicker">CITIZEN DASHBOARD</span><h1>Your complaints</h1><p>Every report, visible from registration to department action.</p></div><Link to="/complaints/new" className="app-button app-button--orange">＋ New complaint</Link></header>
+    {query.isLoading && <div className="complaint-table is-loading" role="status" aria-live="polite" aria-label="Loading complaints" aria-busy="true"><span /><span /><span /></div>}
+    {query.isError && <div className="app-notice app-notice--warning" role="alert"><strong>We couldn’t load your complaints.</strong><span>Check your connection, then try again. Your filed reports remain safe.</span><button type="button" onClick={() => query.refetch()}>Try again</button></div>}
+    {query.data?.length === 0 && <div className="app-empty"><div className="app-empty__illustration" aria-hidden="true"><span>⌖</span><i /><b /></div><h2>Your neighbourhood starts here</h2><p>Report a local issue with a location, voice note, text, or photo. We’ll route it and give you a ticket to track.</p><Link to="/complaints/new" className="app-button app-button--orange">File your first complaint</Link></div>}
+    {query.data && query.data.length > 0 && <div className="complaint-table" role="table" aria-label="Your complaints"><div className="complaint-table__head" role="row"><span role="columnheader">Ticket ID</span><span role="columnheader">Category</span><span role="columnheader">Status</span><span role="columnheader">Filed on</span></div>{query.data.map((item, index) => <Link key={item.id} to={`/complaints/${item.id}`} className="complaint-table__row" style={{ "--row-delay": `${Math.min(index, 8) * 35}ms` } as CSSProperties} role="row" aria-label={`Open complaint ${item.human_id}, ${item.category ?? "category pending"}`}><strong role="cell">{item.human_id}</strong><span className="complaint-category" role="cell"><i aria-hidden="true">{categoryLetter(item.category)}</i><span><b>{item.category ?? "Category pending"}</b><small>{item.priority ? `${item.priority} priority` : "Municipal routing"}</small></span></span><span role="cell"><StatusChip status={item.status} /></span><time role="cell" dateTime={item.created_at}>{new Date(item.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}</time></Link>)}</div>}
+  </div>;
 }

@@ -3,6 +3,9 @@ name: jan-setu
 services:
   postgres:
     image: postgres:16-alpine
+    profiles:
+      - dev
+      - prod
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-jan_setu}
       POSTGRES_USER: ${POSTGRES_USER:-jan_setu_app}
@@ -45,8 +48,53 @@ services:
       postgres:
         condition: service_healthy
     profiles:
-      - services
+      - prod
 
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE: ${VITE_API_BASE:-}
+        VITE_ASSET_BASE: ${VITE_ASSET_BASE:-/}
+        VITE_TILE_URL: ${VITE_TILE_URL:-https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png}
+    image: jan-setu-frontend:local
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles:
+      - prod
+
+  # Daily local development worker. FastAPI itself runs on the host at :8000.
+  worker-dev:
+    build: .
+    image: jan-setu-api:local
+    command: jan-setu-worker
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MOCK_API_BASE_URL: http://host.docker.internal:8000
+      UPLOAD_DIR: /data/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - uploads:/data/uploads
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    profiles:
+      - dev
+
+  # Full-container stack worker. It reaches the Compose API service directly.
   worker:
     build: .
     image: jan-setu-api:local
@@ -56,6 +104,9 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      MOCK_API_BASE_URL: http://api:8000
       UPLOAD_DIR: /data/uploads
     volumes:
       - uploads:/data/uploads
@@ -63,25 +114,34 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      api:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
     profiles:
-      - services
+      - prod
 
-  mailhog:
-    image: mailhog/mailhog
+  # Local-only SMTP inbox. It is not part of Azure/production deployment.
+  mailpit:
+    image: axllent/mailpit:latest
     ports:
       - "127.0.0.1:8025:8025"
       - "127.0.0.1:1025:1025"
     restart: unless-stopped
     profiles:
-      - services
+      - dev
+      - prod
 
+  # Temporary Cloudflare URL for Meta WhatsApp webhook development. The API runs
+  # on the host in the dev workflow, so cloudflared reaches Docker Desktop's host bridge.
   tunnel:
     image: cloudflare/cloudflared:latest
-    command: tunnel --no-autoupdate --protocol http2 --url http://api:8000
-    depends_on:
-      - api
+    command: tunnel --no-autoupdate --protocol http2 --url http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
     profiles:
-      - tunnel
+      - dev
 
 volumes:
   postgres_data:

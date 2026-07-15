@@ -117,9 +117,30 @@ jobs:
         working-directory: frontend
         run: npx tsc --noEmit
 
-      - name: Build
+      - name: Build production artifact
         working-directory: frontend
+        env:
+          VITE_ASSET_BASE: /portal/
+          VITE_TILE_URL: https://tiles.example.test/{z}/{x}/{y}.png
         run: npm run build
+
+      - name: Check production artifact
+        working-directory: frontend
+        run: |
+          test -f dist/index.html
+          grep -q '/portal/assets/' dist/index.html
+          grep -R -q 'tiles.example.test' dist/assets
+
+      - name: Validate Nginx configuration and response headers
+        run: |
+          docker build -t jan-setu-frontend-ci frontend
+          docker run -d --rm --name jan-setu-frontend-ci -p 127.0.0.1:8080:80 jan-setu-frontend-ci
+          trap 'docker stop jan-setu-frontend-ci' EXIT
+          for attempt in $(seq 1 20); do curl --fail --silent http://127.0.0.1:8080/ >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:8080/deep/link | grep -q '<div id="root">'
+          asset=$(find frontend/dist/assets -type f | head -n 1 | xargs basename)
+          curl --fail --silent --head "http://127.0.0.1:8080/assets/$asset" | grep -qi 'Cache-Control: public, max-age=31536000, immutable'
+          curl --fail --silent --head http://127.0.0.1:8080/ | grep -qi 'Cache-Control: no-cache'
 
   ci-success:
     name: CI success

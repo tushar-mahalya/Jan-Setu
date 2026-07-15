@@ -80,11 +80,16 @@ interface RequestOptions extends RequestInit {
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { auth = true, _isRetry = false, headers, ...rest } = options;
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...rest,
-    credentials: "include",
-    headers: buildHeaders(headers, auth),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...rest,
+      credentials: "include",
+      headers: buildHeaders(headers, auth),
+    });
+  } catch {
+    throw new ApiError(0, "We couldn’t reach Jan Setu. Check your connection and try again.");
+  }
 
   if (response.status === 401 && auth && !_isRetry) {
     const newToken = await refreshAccessToken();
@@ -139,10 +144,15 @@ export function apiPostEmpty<T>(path: string, options?: RequestOptions): Promise
  */
 export async function downloadWithAuth(path: string, filename: string): Promise<void> {
   const url = /^https?:\/\//i.test(path) ? path : `${API_BASE}${path}`;
-  const response = await fetch(url, {
-    credentials: "include",
-    headers: buildHeaders(undefined, true),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      credentials: "include",
+      headers: buildHeaders(undefined, true),
+    });
+  } catch {
+    throw new ApiError(0, "We couldn’t download the receipt. Check your connection and try again.");
+  }
   if (!response.ok) {
     throw new ApiError(response.status, await readErrorMessage(response));
   }

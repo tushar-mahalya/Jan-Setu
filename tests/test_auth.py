@@ -3,7 +3,13 @@ import re
 import jwt
 import pytest
 
-from jan_setu.auth import create_access_token, decode_access_token, generate_code, hash_code
+from jan_setu.auth import (
+    create_access_token,
+    decode_access_token,
+    generate_code,
+    hash_code,
+    normalize_phone,
+)
 from jan_setu.config import Settings
 
 _CODE_PATTERN = re.compile(r"^JS-[A-Z0-9]{6}$")
@@ -28,6 +34,18 @@ def test_hash_code_is_case_and_whitespace_insensitive():
 
 def test_hash_code_differs_for_different_codes():
     assert hash_code("JS-AB12CD") != hash_code("JS-XY99ZZ")
+
+
+@pytest.mark.parametrize(
+    ("raw_phone", "expected"),
+    [
+        ("7652064884", "917652064884"),
+        ("+91 76520 64884", "917652064884"),
+        ("917652064884", "917652064884"),
+    ],
+)
+def test_normalize_phone_uses_meta_indian_whatsapp_id(raw_phone, expected):
+    assert normalize_phone(raw_phone) == expected
 
 
 def _settings(secret: str = "test-secret-key-for-jwt-tests-1234567890") -> Settings:

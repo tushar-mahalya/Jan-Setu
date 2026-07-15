@@ -18,6 +18,8 @@ from jan_setu.whatsapp.client import (
     verify_meta_signature,
 )
 
+PRODUCTION_JWT_SECRET = "test-production-jwt-secret-at-least-32-bytes"
+
 
 @pytest.fixture(autouse=True)
 def clear_settings_cache():
@@ -125,6 +127,7 @@ def test_whatsapp_client_uses_injected_http_client(monkeypatch):
 
 def test_webhook_post_requires_secret_outside_development(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", PRODUCTION_JWT_SECRET)
     monkeypatch.setenv("WHATSAPP_APP_SECRET", "")
     with TestClient(app) as client:
         response = client.post("/whatsapp/webhook", json={"entry": []})
@@ -289,6 +292,7 @@ def test_iter_incoming_messages_handles_text_and_unsupported_types():
 
 def test_v1_endpoint_rejects_missing_api_key_outside_development(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", PRODUCTION_JWT_SECRET)
     monkeypatch.setenv("API_KEY", "secret-key")
     with TestClient(app) as client:
         response = client.get("/v1/contacts")
@@ -298,6 +302,7 @@ def test_v1_endpoint_rejects_missing_api_key_outside_development(monkeypatch):
 
 def test_v1_endpoint_requires_api_key_config_outside_development(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", PRODUCTION_JWT_SECRET)
     monkeypatch.setenv("API_KEY", "")
     with TestClient(app) as client:
         response = client.get("/v1/contacts")

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Literal, TextIO
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from jan_setu.logctx import RequestIdFilter
@@ -16,7 +16,8 @@ Environment = Literal["development", "test", "staging", "production"]
 
 DEV_POSTGRES_PASSWORD = "jan_setu_dev_password"
 DEV_VERIFY_TOKEN = "dev_verify_token"
-DEV_JWT_SECRET = "dev_jwt_secret_change_me"
+DEV_JWT_SECRET = "jan_setu_local_jwt_secret_only_change_me_32"
+MIN_JWT_SECRET_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -115,6 +116,17 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    @model_validator(mode="after")
+    def validate_jwt_secret(self) -> "Settings":
+        secret = self.jwt_secret.get_secret_value()
+        if len(secret.encode("utf-8")) < MIN_JWT_SECRET_BYTES:
+            raise ValueError(f"JWT_SECRET must be at least {MIN_JWT_SECRET_BYTES} bytes")
+        if self.environment in {"staging", "production"} and secret == DEV_JWT_SECRET:
+            raise ValueError(
+                "JWT_SECRET must not use the local development default outside development/test"
+            )
+        return self
+
     @field_validator(
         "whatsapp_app_secret",
         "whatsapp_access_token",
@@ -159,7 +171,7 @@ class Settings(BaseSettings):
         """Dev-default secrets still active. Checked once at startup and logged
         as a warning (not fail-fast: the per-request checks in api.py already
         gate the endpoints that actually need these secrets)."""
-        if self.environment != "production":
+        if self.environment not in {"staging", "production"}:
             return []
         issues = []
         if self.postgres_password.get_secret_value() == DEV_POSTGRES_PASSWORD:
@@ -168,6 +180,8 @@ class Settings(BaseSettings):
             issues.append("WHATSAPP_VERIFY_TOKEN is the dev default")
         if self.jwt_secret.get_secret_value() == DEV_JWT_SECRET:
             issues.append("JWT_SECRET is the dev default")
+        if len(self.jwt_secret.get_secret_value().encode("utf-8")) < MIN_JWT_SECRET_BYTES:
+            issues.append("JWT_SECRET is shorter than 32 bytes")
         if self.whatsapp_app_secret is None:
             issues.append("WHATSAPP_APP_SECRET is not set")
         if self.api_key is None:
