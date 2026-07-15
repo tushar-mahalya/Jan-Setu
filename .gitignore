@@ -14,3 +14,7 @@ wheels/
 .ruff_cache/
 .pytest_cache/
 *.log
+.DS_Store
+frontend/test-results/
+frontend/playwright-report/
+.claude/worktrees/
