@@ -19,11 +19,15 @@ export type GrievanceSource = "whatsapp" | "web";
 
 export interface RequestCodeResponse {
   verification_id: string;
-  code: string;
-  wa_link: string;
+  method: "whatsapp_approval" | "reverse_code";
+  code?: string | null;
+  wa_link?: string | null;
+  browser_label?: string | null;
+  requested_at?: string | null;
+  expires_at?: string | null;
 }
 
-export type AuthStatusValue = "pending" | "verified" | "expired";
+export type AuthStatusValue = "pending" | "verified" | "denied" | "expired";
 
 export interface AuthStatusResponse {
   status: AuthStatusValue;
@@ -52,6 +56,28 @@ export interface GrievanceDraftResponse {
   image_match_status: ImageMatchStatus | null;
   flags: string[];
   pdf_url: string | null;
+  taxonomy_version?: string | null;
+  category_id?: string | null;
+  category_label?: string | null;
+  domain_label?: string | null;
+  safety_level?: "none" | "possible" | "immediate" | null;
+  asset_scope?: "public" | "private" | "unknown" | null;
+  disposition?: string | null;
+  review_status?: string | null;
+  structured_facts?: {
+    summary?: string;
+    owner_hint?: string;
+    requested_action?: string | null;
+    missing_facts?: string[];
+    clarification_question?: string | null;
+    contradictions?: string[];
+    image_observations?: string[];
+  } | null;
+  routing?: {
+    owning_agency?: string | null;
+    dispatch_enabled?: boolean;
+    sla_hours?: number | null;
+  } | null;
 }
 
 export interface ConfirmResponse {
