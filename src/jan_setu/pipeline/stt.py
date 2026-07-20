@@ -14,6 +14,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.config import Settings
+from jan_setu.pipeline.media import normalize_mime_type
 from jan_setu.pipeline.throttle import reserve_slot
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,8 @@ async def transcribe_clip(
     if wait > 0:
         await asyncio.sleep(wait)
 
-    extension = mimetypes.guess_extension(mime_type) or ".ogg" if mime_type else ".ogg"
+    mime_type = normalize_mime_type(mime_type) or "audio/ogg"
+    extension = mimetypes.guess_extension(mime_type) or ".ogg"
     filename = f"clip{extension}"
     files = {"file": (filename, audio_bytes, mime_type)}
     data = {"model": settings.sarvam_model, "mode": "translate"}

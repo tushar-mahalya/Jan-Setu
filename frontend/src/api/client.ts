@@ -37,20 +37,31 @@ function buildHeaders(extra?: HeadersInit, includeAuth = true): Headers {
 /**
  * Attempts to refresh the access token using the httpOnly refresh cookie.
  * Returns the new token on success, or null if the refresh failed.
+ *
+ * Single-flight: refresh tokens rotate on use, so two concurrent refreshes
+ * (StrictMode double-mount on boot, parallel 401 retries) race — the loser
+ * presents an already-revoked cookie, gets a 401, and logs the user out.
  */
-async function refreshAccessToken(): Promise<string | null> {
-  try {
-    const response = await fetch(`${API_BASE}/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!response.ok) return null;
-    const data = (await response.json()) as { access_token: string };
-    setAccessToken(data.access_token);
-    return data.access_token;
-  } catch {
-    return null;
-  }
+let refreshInFlight: Promise<string | null> | null = null;
+
+function refreshAccessToken(): Promise<string | null> {
+  refreshInFlight ??= (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) return null;
+      const data = (await response.json()) as { access_token: string };
+      setAccessToken(data.access_token);
+      return data.access_token;
+    } catch {
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
 }
 
 /**
@@ -131,6 +142,15 @@ export function apiPostForm<T>(path: string, formData: FormData, options?: Reque
 
 export function apiPatchForm<T>(path: string, formData: FormData, options?: RequestOptions): Promise<T> {
   return request<T>(path, { ...options, method: "PATCH", body: formData });
+}
+
+export function apiPatchJson<T>(path: string, body: unknown, options?: RequestOptions): Promise<T> {
+  return request<T>(path, {
+    ...options,
+    method: "PATCH",
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json", ...(options?.headers ?? {}) },
+  });
 }
 
 export function apiPostEmpty<T>(path: string, options?: RequestOptions): Promise<T> {

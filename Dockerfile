@@ -16,9 +16,11 @@ COPY migrations ./migrations
 
 RUN uv sync --frozen --no-dev
 
-# Run as a non-root user
+# Create runtime-owned writable paths before named volumes are mounted. Fresh
+# Docker volumes inherit this directory's ownership when first populated.
 RUN useradd --create-home --uid 1000 appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /data/uploads \
+    && chown -R appuser:appuser /app /data/uploads
 USER appuser
 
 EXPOSE 8000

@@ -13,6 +13,7 @@ from jan_setu.auth import router as auth_router
 from jan_setu.config import configure_logging, get_settings
 from jan_setu.logctx import request_id_var
 from jan_setu.pipeline.dispatchers import mock_router
+from jan_setu.officials import router as official_router
 from jan_setu.web.api import router as web_router
 
 settings = get_settings()
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     app.include_router(router)
     app.include_router(auth_router)
     app.include_router(web_router)
+    app.include_router(official_router)
     app.include_router(mock_router)
     return app
 

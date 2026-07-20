@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { restoreSession } from "./api/client";
 import { useAuth } from "./auth/AuthContext";
 import Landing from "./pages/Landing";
@@ -11,6 +11,22 @@ const Login = lazy(() => import("./pages/Login"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const NewComplaint = lazy(() => import("./pages/NewComplaint"));
 const ComplaintDetail = lazy(() => import("./pages/ComplaintDetail"));
+const OfficialLogin = lazy(() => import("./pages/OfficialLogin"));
+const OfficialConsole = lazy(() => import("./pages/OfficialConsole"));
+
+// React Router doesn't scroll to #fragment targets on client-side navigation,
+// so header links like "/#how" silently did nothing.
+function ScrollToHash() {
+  const location = useLocation();
+  useEffect(() => {
+    if (location.hash) {
+      document.getElementById(location.hash.slice(1))?.scrollIntoView();
+    } else {
+      window.scrollTo(0, 0);
+    }
+  }, [location]);
+  return null;
+}
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -25,6 +41,11 @@ export default function App() {
   const [isRestoring, setIsRestoring] = useState(true);
 
   useEffect(() => {
+    const needsCitizenSession = /^\/(dashboard|complaints)(\/|$)/.test(window.location.pathname);
+    if (!needsCitizenSession) {
+      setIsRestoring(false);
+      return;
+    }
     let cancelled = false;
     restoreSession().then((token) => {
       if (cancelled) return;
@@ -40,10 +61,13 @@ export default function App() {
 
   return (
     <Suspense fallback={<LoadingState />}>
+      <ScrollToHash />
       <Routes>
       <Route path="/" element={<Landing />} />
       <Route path="/about" element={<About />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/official/login" element={<OfficialLogin />} />
+      <Route path="/official" element={<OfficialConsole />} />
       <Route
         path="/dashboard"
         element={

@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 import httpx
 
-from jan_setu.auth import verify_code_from_whatsapp
+from jan_setu.auth import hash_code, parse_login_approval_id, verify_code_from_whatsapp
 from jan_setu.config import Settings
 from jan_setu.whatsapp import copy as msg
 from jan_setu.whatsapp.conversation import (
@@ -50,6 +50,7 @@ from jan_setu.repositories import (
     claim_event,
     claim_inbound,
     create_draft_grievance,
+    decide_login_approval,
     fetch_stuck_processing,
     fetch_unprocessed_event_ids,
     get_contact,
@@ -225,6 +226,56 @@ async def _handle_inbound(
             contact_id = contact.id
             if not await claim_inbound(session, inbound_message_id=incoming.meta_message_id):
                 await session.commit()  # replay: already consumed
+                return
+
+            # Login approval buttons are context-bound and always short-circuit
+            # before reverse codes or the grievance FSM.
+            login_reply = parse_login_approval_id(incoming.reply_id)
+            if login_reply is not None and incoming.context_message_id:
+                decision_id, challenge_id, verifier = login_reply
+                decision = "approved" if decision_id == "login_yes" else "denied"
+                approval = await decide_login_approval(
+                    session,
+                    challenge_id=challenge_id,
+                    verifier_hash=hash_code(verifier),
+                    contact_id=contact.id,
+                    phone=incoming.wa_id,
+                    context_message_id=incoming.context_message_id,
+                    decision_message_id=incoming.meta_message_id,
+                    decision=decision,
+                )
+                await annotate_consumption(
+                    session,
+                    inbound_message_id=incoming.meta_message_id,
+                    conversation_id=None,
+                    state_before=None,
+                    state_after=None,
+                )
+                if approval is not None:
+                    reply_body = (
+                        "Sign-in approved. Return to the browser that requested it."
+                        if decision == "approved"
+                        else "Sign-in denied. Your Jan Setu account remains protected."
+                    )
+                else:
+                    reply_body = "This sign-in request is invalid, expired, or already used."
+                row = await store_outgoing_pending(
+                    session,
+                    contact_id=contact.id,
+                    conversation_id=None,
+                    reply_kind="login_approval_decision",
+                    message_type="text",
+                    text_body=reply_body,
+                    payload=build_text_payload(to=incoming.wa_id, body=reply_body),
+                    idempotency_key=f"login-decision:{incoming.meta_message_id}",
+                    in_response_to_message_id=incoming.meta_message_id,
+                )
+                if row is not None:
+                    pending_ids.append(row.id)
+                await session.commit()
+                for message_id in pending_ids:
+                    async with AsyncSessionLocal() as send_session:
+                        await send_pending(send_session, settings, client, message_id)
                 return
 
             # Pre-FSM intercept: a reverse-OTP verification code can arrive at

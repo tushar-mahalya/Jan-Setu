@@ -18,3 +18,15 @@ wheels/
 frontend/test-results/
 frontend/playwright-report/
 .claude/worktrees/
+
+# Local Claude/session artifacts
+.claude/launch.json
+.claude/plans/
+.impeccable/
+
+# Runtime uploads generated during local testing
+data/uploads/
+
+# Generated product/design briefs
+DESIGN.md
+PRODUCT.md

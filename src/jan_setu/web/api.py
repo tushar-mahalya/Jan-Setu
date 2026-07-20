@@ -28,17 +28,27 @@ from jan_setu.auth import get_current_user
 from jan_setu.config import Settings, get_settings
 from jan_setu.db import get_session
 from jan_setu.db.models import Grievance, User
-from jan_setu.pipeline import finalize_grievance, recheck_image, run_pipeline
+from jan_setu.pipeline import finalize_grievance, recheck_image
 from jan_setu.pipeline.media import (
     UploadTooLarge,
     UploadTypeNotAllowed,
     new_filename,
+    normalize_mime_type,
     save_upload,
     validate_upload,
 )
-from jan_setu.pipeline.taxonomy import department_for_category
+from jan_setu.pipeline.taxonomy import (
+    DOMAIN_LABELS,
+    TAXONOMY_VERSION,
+    canonical_category_key,
+    category_or_default,
+    department_for_category,
+    evaluate_routing_policy,
+    route_for_category,
+)
 from jan_setu.repositories import (
     create_draft_grievance,
+    enqueue_pipeline_job,
     get_grievance,
     list_grievance_events,
     list_grievances_for_user,
@@ -48,6 +58,7 @@ from jan_setu.schemas import (
     GrievanceDetail,
     GrievanceDraftResponse,
     GrievanceEventRead,
+    GrievanceReviewPatch,
     GrievanceSummary,
 )
 
@@ -63,7 +74,8 @@ def _require_owner(grievance: Grievance | None, user: User) -> Grievance:
 
 async def _draft_response(session: AsyncSession, grievance_id: UUID) -> GrievanceDraftResponse:
     grievance = await get_grievance(session, grievance_id=grievance_id)
-    department = department_for_category(grievance.category or "other")
+    category = category_or_default(grievance.category_id or grievance.category)
+    department = department_for_category(category.key)
     return GrievanceDraftResponse(
         id=grievance.id,
         human_id=grievance.human_id,
@@ -78,12 +90,21 @@ async def _draft_response(session: AsyncSession, grievance_id: UUID) -> Grievanc
         image_match_status=grievance.image_match_status,
         flags=list(grievance.flags or []),
         pdf_url=f"/api/grievances/{grievance.id}/pdf" if grievance.pdf_path else None,
+        taxonomy_version=grievance.taxonomy_version,
+        category_id=grievance.category_id,
+        category_label=category.label if grievance.category_id else None,
+        domain_label=DOMAIN_LABELS.get(category.parent_key) if grievance.category_id else None,
+        safety_level=grievance.safety_level,
+        asset_scope=grievance.asset_scope,
+        disposition=grievance.disposition,
+        review_status=grievance.review_status,
+        structured_facts=grievance.structured_facts,
+        routing=grievance.routing_snapshot,
     )
 
 
 @router.post("/draft", response_model=GrievanceDraftResponse)
 async def create_draft(
-    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     user: Annotated[User, Depends(get_current_user)],
@@ -120,7 +141,7 @@ async def create_draft(
         if not clip.filename:
             continue
         data = await clip.read()
-        mime_type = clip.content_type or "audio/ogg"
+        mime_type = normalize_mime_type(clip.content_type) or "audio/ogg"
         try:
             validate_upload(
                 mime_type=mime_type, size_bytes=len(data), kind="audio", settings=settings
@@ -167,20 +188,97 @@ async def create_draft(
         )
 
     await set_grievance_fields(
-        session, grievance_id=grievance.id, issue_messages=issue_messages, photo_path=photo_path
+        session,
+        grievance_id=grievance.id,
+        issue_messages=issue_messages,
+        photo_path=photo_path,
+        status="processing",
     )
+    await enqueue_pipeline_job(session, grievance_id=grievance.id)
     await session.commit()
+    return await _draft_response(session, grievance.id)
 
-    http_client = request.app.state.http_client
-    try:
-        await run_pipeline(grievance.id, settings, http_client)
-    except Exception:
-        logger.exception("web_draft_pipeline_failed", extra={"grievance_id": str(grievance.id)})
+
+@router.get("/{grievance_id}/draft", response_model=GrievanceDraftResponse)
+async def get_draft(
+    grievance_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> GrievanceDraftResponse:
+    _require_owner(await get_grievance(session, grievance_id=grievance_id), user)
+    return await _draft_response(session, grievance_id)
+
+
+@router.patch("/{grievance_id}/review", response_model=GrievanceDraftResponse)
+async def update_review(
+    grievance_id: UUID,
+    body: GrievanceReviewPatch,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> GrievanceDraftResponse:
+    grievance = _require_owner(await get_grievance(session, grievance_id=grievance_id), user)
+    category_key = canonical_category_key(
+        body.category_id or grievance.category_id or grievance.category
+    )
+    if category_key is None:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Complaint processing failed; please try again.",
-        ) from None
-
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown civic category"
+        )
+    asset_scope = body.asset_scope or grievance.asset_scope or "unknown"
+    if asset_scope not in ("public", "private", "unknown"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid asset scope"
+        )
+    category = category_or_default(category_key)
+    policy = evaluate_routing_policy(
+        category_key=category_key,
+        safety=grievance.safety_level or "none",
+        asset_scope=asset_scope,
+        jurisdiction_known=bool(grievance.location_address),
+        extraction_confidence=1.0,
+    )
+    route = route_for_category(category_key)
+    facts = dict(grievance.structured_facts or {})
+    if body.summary is not None:
+        facts["summary"] = body.summary.strip()
+    if body.clarification_answer is not None:
+        facts["clarification_answer"] = body.clarification_answer.strip()
+    await set_grievance_fields(
+        session,
+        grievance_id=grievance.id,
+        taxonomy_version=TAXONOMY_VERSION,
+        category=category_key,
+        category_id=category_key,
+        aggregation_key=category.aggregation_key,
+        department_key=category.department_key,
+        priority=policy.priority,
+        term=category.term_hint,
+        confidence=1.0,
+        asset_scope=asset_scope,
+        disposition=policy.disposition,
+        review_status="pending_official" if policy.needs_official_review else "citizen_review",
+        structured_facts=facts,
+        routing_snapshot={
+            "taxonomy_version": TAXONOMY_VERSION,
+            "category_id": category_key,
+            "department_key": route.department_key if route else category.department_key,
+            "owning_agency": route.owning_agency if route else None,
+            "dispatch_enabled": route.dispatch_enabled if route else False,
+            "sla_hours": route.sla_hours if route else None,
+            "disposition": policy.disposition,
+        },
+        state_version=grievance.state_version + 1,
+    )
+    # A correction or clarification is a discrepancy signal: queue an escalated
+    # re-extraction (stronger model + the citizen's context) in the background.
+    if body.category_id or body.clarification_answer:
+        await enqueue_pipeline_job(
+            session,
+            grievance_id=grievance.id,
+            stage="reextract",
+            key_suffix=str(grievance.state_version + 1),
+        )
+    await session.commit()
     return await _draft_response(session, grievance.id)
 
 

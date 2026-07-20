@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -227,6 +228,21 @@ class Grievance(TimestampMixin, Base):
     drafted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # v2 intelligence/routing fields are additive during the compatibility rollout.
+    taxonomy_version: Mapped[str | None] = mapped_column(String(32))
+    category_id: Mapped[str | None] = mapped_column(String(96), index=True)
+    aggregation_key: Mapped[str | None] = mapped_column(String(96), index=True)
+    jurisdiction_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    safety_level: Mapped[str | None] = mapped_column(String(16))
+    asset_scope: Mapped[str | None] = mapped_column(String(16))
+    disposition: Mapped[str | None] = mapped_column(String(40))
+    review_status: Mapped[str | None] = mapped_column(String(32), index=True)
+    policy_version: Mapped[str | None] = mapped_column(String(32))
+    routing_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    structured_facts: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    transcript_metadata: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    state_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
     __table_args__ = (
         Index("ix_grievances_status", "status"),
         Index("ix_grievances_created_at", "created_at"),
@@ -306,6 +322,43 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class LoginApprovalChallenge(Base):
+    """Browser-bound WhatsApp login approval for an existing linked citizen."""
+
+    __tablename__ = "login_approval_challenges"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("contacts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    verifier_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    browser_nonce_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    browser_label: Mapped[str | None] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_message_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    approval_outbound_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("whatsapp_messages.id", ondelete="SET NULL"), index=True
+    )
+    request_ip_hash: Mapped[str | None] = mapped_column(String(64))
+
+    __table_args__ = (
+        Index("ix_login_approval_user_status_requested", "user_id", "status", "requested_at"),
+    )
+
+
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
 
@@ -323,3 +376,154 @@ class WebhookEvent(Base):
     # turns silently).
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Jurisdiction(TimestampMixin, Base):
+    __tablename__ = "jurisdictions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    taxonomy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_demo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    geofence: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+
+class JurisdictionRoute(TimestampMixin, Base):
+    __tablename__ = "jurisdiction_routes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    jurisdiction_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("jurisdictions.id", ondelete="CASCADE"), index=True
+    )
+    taxonomy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    category_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    department_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    owning_agency: Mapped[str] = mapped_column(String(255), nullable=False)
+    dispatch_target: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    dispatch_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sla_hours: Mapped[int | None] = mapped_column(Integer)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[str | None] = mapped_column(String(255))
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "uq_jurisdiction_route_version_category",
+            "jurisdiction_id",
+            "taxonomy_version",
+            "category_id",
+            unique=True,
+        ),
+    )
+
+
+class GrievanceExtraction(Base):
+    __tablename__ = "grievance_extractions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    grievance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grievances.id", ondelete="CASCADE"), index=True
+    )
+    extraction_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    taxonomy_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="openrouter")
+    requested_models: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    actual_model: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    normalized_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    degradation_reason: Mapped[str | None] = mapped_column(String(128))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_by_type: Mapped[str | None] = mapped_column(String(32))
+    accepted_by_id: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class PipelineJob(TimestampMixin, Base):
+    __tablename__ = "pipeline_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    grievance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grievances.id", ondelete="CASCADE"), index=True
+    )
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class DispatchOutbox(TimestampMixin, Base):
+    __tablename__ = "dispatch_outbox"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    grievance_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grievances.id", ondelete="CASCADE"), index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
+    routing_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_ref: Mapped[str | None] = mapped_column(String(255))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class OfficialUser(TimestampMixin, Base):
+    __tablename__ = "official_users"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    jurisdiction_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("jurisdictions.id", ondelete="RESTRICT"), index=True
+    )
+    department_keys: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OfficialLoginChallenge(Base):
+    __tablename__ = "official_login_challenges"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    official_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("official_users.id", ondelete="CASCADE"), index=True
+    )
+    email_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class OfficialAuditEvent(Base):
+    __tablename__ = "official_audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    official_user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("official_users.id", ondelete="RESTRICT"), index=True
+    )
+    grievance_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("grievances.id", ondelete="SET NULL"), index=True
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    before: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    after: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    request_id: Mapped[str | None] = mapped_column(String(64))
+    ip_hash: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

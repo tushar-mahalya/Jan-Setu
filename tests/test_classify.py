@@ -1,4 +1,4 @@
-from jan_setu.pipeline.classify import parse_classification, parse_image_match
+from jan_setu.pipeline.classify import parse_classification, parse_extraction, parse_image_match
 from jan_setu.pipeline.taxonomy import CATEGORIES
 
 
@@ -123,6 +123,48 @@ def test_parse_classification_extracts_json_wrapped_in_prose_and_code_fence():
     assert result.confidence == 0.75
 
 
+def test_parse_structured_multilingual_extraction():
+    raw = """{
+      "summary": "मुख्य सड़क पर खुला मैनहोल है",
+      "category_id": "open_or_damaged_manhole",
+      "alternative_category_ids": ["drain_cover_on_road"],
+      "confidence": 0.94,
+      "asset_scope": "public",
+      "owner_hint": "ulb",
+      "safety": "immediate",
+      "requested_action": "Cover the manhole",
+      "landmark": "बस स्टैंड",
+      "incident_time": null,
+      "missing_facts": [],
+      "clarification_question": null,
+      "evidence": ["खुला मैनहोल"],
+      "image_observations": ["Open circular road cavity"],
+      "contradictions": [],
+      "multiple_issues": false
+    }"""
+    result = parse_extraction(raw)
+    assert result is not None
+    assert result.category_id == "open_or_damaged_manhole"
+    assert result.safety == "immediate"
+    assert result.asset_scope == "public"
+    assert result.landmark == "बस स्टैंड"
+
+
+def test_structured_extraction_rejects_unknown_taxonomy_id():
+    raw = '{"summary":"x","category_id":"invented_department","confidence":0.9}'
+    assert parse_extraction(raw) is None
+
+
+def test_structured_extraction_normalizes_untrusted_enums():
+    raw = '{"summary":"wire","category_id":"exposed_or_low_hanging_wire","confidence":5,"asset_scope":"government","owner_hint":"made_up","safety":"urgent","alternative_category_ids":[]}'
+    result = parse_extraction(raw)
+    assert result is not None
+    assert result.confidence == 1.0
+    assert result.asset_scope == "unknown"
+    assert result.owner_hint == "unknown"
+    assert result.safety == "possible"
+
+
 def test_parse_image_match_extracts_json_wrapped_in_prose_and_code_fence():
     raw = (
         "Here you go:\n"
@@ -137,3 +179,59 @@ def test_parse_image_match_extracts_json_wrapped_in_prose_and_code_fence():
     assert result is not None
     assert result.matches is True
     assert result.confidence == 0.6
+
+
+def _settings(**overrides):
+    from jan_setu.config import Settings
+
+    return Settings(_env_file=None, **overrides)
+
+
+def test_attempts_groq_first_then_openrouter_failsafe():
+    from jan_setu.pipeline.classify import EXTRACTION_SCHEMA, build_extraction_attempts
+
+    settings = _settings(groq_api_key="gk", openrouter_api_key="ok")
+    attempts = build_extraction_attempts(settings, schema=EXTRACTION_SCHEMA)
+
+    providers = [attempt["provider"] for attempt in attempts]
+    assert providers == ["groq", "groq", "groq", "openrouter"]
+    primary = attempts[0]["body"]
+    assert primary["model"] == "openai/gpt-oss-120b"
+    assert primary["reasoning_effort"] == "low"
+    assert primary["response_format"]["type"] == "json_schema"
+    assert primary["response_format"]["json_schema"]["strict"] is True
+    # llama can't enforce json_schema on Groq — falls back to json_object mode
+    assert attempts[2]["body"]["response_format"] == {"type": "json_object"}
+
+
+def test_attempts_image_requests_skip_groq_no_vision_models():
+    from jan_setu.pipeline.classify import build_extraction_attempts
+
+    settings = _settings(groq_api_key="gk", openrouter_api_key="ok")
+    attempts = build_extraction_attempts(settings, has_image=True)
+
+    assert [attempt["provider"] for attempt in attempts] == ["openrouter"]
+
+
+def test_attempts_escalated_uses_high_reasoning_effort():
+    from jan_setu.pipeline.classify import build_extraction_attempts
+
+    settings = _settings(groq_api_key="gk")
+    attempts = build_extraction_attempts(settings, escalated=True)
+
+    assert attempts[0]["body"]["reasoning_effort"] == "high"
+
+
+def test_attempts_openrouter_models_array_capped_at_three():
+    from jan_setu.pipeline.classify import build_extraction_attempts
+
+    settings = _settings(openrouter_api_key="ok", openrouter_models="a,b,c,d,e")
+    attempts = build_extraction_attempts(settings)
+
+    assert attempts[0]["body"]["models"] == ["a", "b", "c"]
+
+
+def test_attempts_empty_without_any_provider_key():
+    from jan_setu.pipeline.classify import build_extraction_attempts
+
+    assert build_extraction_attempts(_settings()) == []

@@ -34,6 +34,10 @@ async def get_user(session: AsyncSession, *, user_id: Any) -> User | None:
     return await session.get(User, user_id)
 
 
+async def get_user_by_phone(session: AsyncSession, *, phone: str) -> User | None:
+    return (await session.execute(select(User).where(User.phone == phone))).scalar_one_or_none()
+
+
 async def get_user_by_contact_id(session: AsyncSession, *, contact_id: Any) -> User | None:
     result = await session.execute(select(User).where(User.contact_id == contact_id))
     return result.scalar_one_or_none()

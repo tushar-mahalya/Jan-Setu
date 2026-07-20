@@ -52,16 +52,27 @@ class SendTextResponse(BaseModel):
 
 class RequestCodeRequest(BaseModel):
     phone: str = Field(min_length=5, max_length=32)
+    browser_nonce: str | None = Field(default=None, min_length=32, max_length=256)
+    browser_label: str | None = Field(default=None, max_length=128)
 
 
 class RequestCodeResponse(BaseModel):
     verification_id: UUID
-    code: str
-    wa_link: str
+    method: str = "reverse_code"
+    code: str | None = None
+    wa_link: str | None = None
+    browser_label: str | None = None
+    requested_at: datetime | None = None
+    expires_at: datetime | None = None
+
+
+class ApprovalStatusRequest(BaseModel):
+    verification_id: UUID
+    browser_nonce: str = Field(min_length=32, max_length=256)
 
 
 class AuthStatusResponse(BaseModel):
-    status: str  # "pending" | "verified" | "expired"
+    status: str  # "pending" | "verified" | "denied" | "expired"
     access_token: str | None = None
 
 
@@ -106,6 +117,23 @@ class GrievanceDraftResponse(BaseModel):
     image_match_status: str | None
     flags: list[str]
     pdf_url: str | None
+    taxonomy_version: str | None = None
+    category_id: str | None = None
+    category_label: str | None = None
+    domain_label: str | None = None
+    safety_level: str | None = None
+    asset_scope: str | None = None
+    disposition: str | None = None
+    review_status: str | None = None
+    structured_facts: dict[str, Any] | None = None
+    routing: dict[str, Any] | None = None
+
+
+class GrievanceReviewPatch(BaseModel):
+    category_id: str | None = None
+    asset_scope: str | None = None
+    summary: str | None = Field(default=None, max_length=600)
+    clarification_answer: str | None = Field(default=None, max_length=2000)
 
 
 class GrievanceDetail(GrievanceSummary):

@@ -20,14 +20,14 @@ from typing import Any
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jan_setu.pipeline.classify import check_image_match, classify_issue
+from jan_setu.pipeline.classify import check_image_match, extract_issue
 from jan_setu.config import Settings
 from jan_setu.db import AsyncSessionLocal, utc_now
 from jan_setu.pipeline.dedup import find_duplicate
 from jan_setu.pipeline.dispatchers import DispatchError, get_dispatcher
 from jan_setu.pipeline.geocoding import reverse_geocode_cached
 from jan_setu.pipeline.media import download_whatsapp_media, save_upload
-from jan_setu.db.models import Contact, Grievance
+from jan_setu.db.models import Contact, Grievance, GrievanceExtraction
 from jan_setu.pipeline.pdfgen import PdfSummary, build_grievance_pdf
 from jan_setu.repositories import (
     add_grievance_event,
@@ -37,7 +37,14 @@ from jan_setu.repositories import (
     set_grievance_fields,
 )
 from jan_setu.pipeline.stt import transcribe_clip
-from jan_setu.pipeline.taxonomy import category_or_default, department_for_category
+from jan_setu.pipeline.taxonomy import (
+    DEMO_JURISDICTION_ID,
+    TAXONOMY_VERSION,
+    category_or_default,
+    department_for_category,
+    evaluate_routing_policy,
+    route_for_category,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,14 +199,6 @@ async def run_pipeline(
         )
         _log_stage("transcribe", grievance_id, flags=stt_flags)
 
-        classification = await classify_issue(session, settings, http_client, text=text)
-        _log_stage(
-            "classify",
-            grievance_id,
-            category=classification.category,
-            degraded=classification.degraded,
-        )
-
         address = grievance.location_address
         if not address and grievance.location_latitude is not None:
             geocode = await reverse_geocode_cached(
@@ -217,27 +216,87 @@ async def run_pipeline(
             photo_media_id=grievance.photo_media_id,
             photo_path=grievance.photo_path,
         )
+        extraction = await extract_issue(
+            session,
+            settings,
+            http_client,
+            text=text,
+            image_bytes=photo_bytes,
+            image_mime_type=photo_mime or "image/jpeg",
+        )
+        policy = evaluate_routing_policy(
+            category_key=extraction.category_id,
+            safety=extraction.safety,
+            asset_scope=extraction.asset_scope,
+            jurisdiction_known=bool(address),
+            extraction_confidence=extraction.confidence,
+        )
+        category = category_or_default(extraction.category_id)
+        route = route_for_category(extraction.category_id)
+        _log_stage(
+            "extract_and_route",
+            grievance_id,
+            category=extraction.category_id,
+            degraded=extraction.degraded,
+            disposition=policy.disposition,
+        )
+
         image_match_status = "none"
         if photo_bytes is not None:
-            match = await check_image_match(
-                session,
-                settings,
-                http_client,
-                text=text,
-                image_bytes=photo_bytes,
-                mime_type=photo_mime or "image/jpeg",
-            )
-            image_match_status = "matched" if match.matches else "mismatched"
-            _log_stage(
-                "image_check", grievance_id, status=image_match_status, degraded=match.degraded
-            )
+            image_match_status = "mismatched" if extraction.contradictions else "matched"
 
         flags = list(stt_flags)
-        if classification.degraded:
+        if extraction.degraded:
             flags.append("classification_failed")
+        if policy.needs_official_review:
+            flags.append("official_review_required")
+        if extraction.multiple_issues:
+            flags.append("multiple_issues")
 
         next_status = (
             "photo_mismatch" if image_match_status == "mismatched" else "awaiting_confirmation"
+        )
+        structured_facts = {
+            "summary": extraction.summary,
+            "alternatives": list(extraction.alternatives),
+            "owner_hint": extraction.owner_hint,
+            "requested_action": extraction.requested_action,
+            "landmark": extraction.landmark,
+            "incident_time": extraction.incident_time,
+            "missing_facts": list(extraction.missing_facts),
+            "clarification_question": extraction.clarification_question,
+            "evidence": list(extraction.evidence),
+            "image_observations": list(extraction.image_observations),
+            "contradictions": list(extraction.contradictions),
+            "model": extraction.actual_model,
+            "latency_ms": extraction.latency_ms,
+        }
+        routing_snapshot = {
+            "taxonomy_version": TAXONOMY_VERSION,
+            "category_id": extraction.category_id,
+            "department_key": route.department_key if route else category.department_key,
+            "owning_agency": route.owning_agency if route else None,
+            "dispatch_enabled": route.dispatch_enabled if route else False,
+            "sla_hours": route.sla_hours if route else None,
+            "disposition": policy.disposition,
+        }
+        session.add(
+            GrievanceExtraction(
+                grievance_id=grievance_id,
+                extraction_version="2",
+                taxonomy_version=TAXONOMY_VERSION,
+                prompt_version="civic-extract-2026-07-v2",
+                provider=extraction.actual_provider or "none",
+                requested_models=list(extraction.requested_models),
+                actual_model=extraction.actual_model,
+                status="degraded" if extraction.degraded else "completed",
+                latency_ms=extraction.latency_ms,
+                raw_response=extraction.raw,
+                normalized_result=structured_facts,
+                confidence=extraction.confidence,
+                needs_review=policy.needs_official_review,
+                degradation_reason=extraction.degradation_reason,
+            )
         )
         grievance = await set_grievance_fields(
             session,
@@ -245,27 +304,38 @@ async def run_pipeline(
             issue_text=text,
             location_address=address,
             source_language=detected_language,
-            category=classification.category,
-            department_key=category_or_default(classification.category).department_key,
-            priority=classification.priority,
-            term=classification.term,
-            confidence=classification.confidence,
+            category=extraction.category_id,
+            department_key=category.department_key,
+            priority=policy.priority,
+            term=category.term_hint,
+            confidence=extraction.confidence,
             image_match_status=image_match_status,
-            flags=flags,
+            flags=list(dict.fromkeys(flags)),
             status=next_status,
+            taxonomy_version=TAXONOMY_VERSION,
+            category_id=extraction.category_id,
+            aggregation_key=category.aggregation_key,
+            jurisdiction_id=DEMO_JURISDICTION_ID,
+            safety_level=extraction.safety,
+            asset_scope=extraction.asset_scope,
+            disposition=policy.disposition,
+            review_status="pending_official" if policy.needs_official_review else "citizen_review",
+            policy_version=TAXONOMY_VERSION,
+            routing_snapshot=routing_snapshot,
+            structured_facts=structured_facts,
         )
         if next_status == "awaiting_confirmation":
             await _build_and_store_pdf(session, settings, grievance, photo_bytes)
         await add_grievance_event(session, grievance_id=grievance_id, status=next_status)
         await session.commit()
 
-        department = department_for_category(classification.category)
+        department = department_for_category(extraction.category_id)
         return PipelineResult(
             grievance_id=str(grievance_id),
             status=next_status,
-            category=classification.category,
+            category=extraction.category_id,
             department_name=department.name,
-            priority=classification.priority,
+            priority=policy.priority,
             flags=flags,
             image_match_status=image_match_status,
         )
@@ -331,6 +401,160 @@ async def recheck_image(
         )
 
 
+# Categories where the first pass effectively failed; a re-extraction may
+# adopt the model's category. Anywhere else the citizen's choice is final.
+REVIEW_FALLBACK_CATEGORIES = frozenset(
+    {"insufficient_information", "multi_issue", "unmapped_service", "possible_non_municipal"}
+)
+
+
+async def reextract_grievance(
+    grievance_id: Any, settings: Settings, http_client: httpx.AsyncClient
+) -> None:
+    """Escalated re-extraction after a citizen flags a discrepancy in review.
+
+    Runs the strongest model tier (gpt-oss at high reasoning effort, then the
+    fallback chain) with the citizen's correction as added context. Guardrail:
+    a concrete citizen-chosen category is never overridden — if the model
+    disagrees, the complaint is flagged ``category_dispute`` for the official.
+    """
+    async with AsyncSessionLocal() as session:
+        grievance = await get_grievance(session, grievance_id=grievance_id)
+        if grievance is None or not grievance.issue_text:
+            return
+        facts = dict(grievance.structured_facts or {})
+        citizen_category = grievance.category_id
+        context_parts = []
+        if citizen_category:
+            context_parts.append(
+                f"The citizen states the issue type is: {category_or_default(citizen_category).label} ({citizen_category})."
+            )
+        if facts.get("clarification_question") and facts.get("clarification_answer"):
+            context_parts.append(
+                f"Clarification asked: {facts['clarification_question']}\n"
+                f"Citizen's answer: {facts['clarification_answer']}"
+            )
+        if facts.get("summary"):
+            context_parts.append(f"Citizen-reviewed summary: {facts['summary']}")
+
+        extraction = await extract_issue(
+            session,
+            settings,
+            http_client,
+            text=grievance.issue_text,
+            escalated=True,
+            correction_context="\n".join(context_parts) or None,
+        )
+        if extraction.degraded:
+            logger.warning(
+                "reextract_degraded",
+                extra={"grievance_id": str(grievance_id), "reason": extraction.degradation_reason},
+            )
+            return
+
+        keep_citizen_category = (
+            bool(citizen_category) and citizen_category not in REVIEW_FALLBACK_CATEGORIES
+        )
+        category = category_or_default(
+            citizen_category if keep_citizen_category else extraction.category_id
+        )
+        flags = list(dict.fromkeys(grievance.flags or []))
+        if (
+            keep_citizen_category
+            and extraction.category_id != citizen_category
+            and "category_dispute" not in flags
+        ):
+            flags.append("category_dispute")
+        asset_scope = (
+            grievance.asset_scope
+            if grievance.asset_scope in ("public", "private")
+            else extraction.asset_scope
+        )
+        confidence = 1.0 if keep_citizen_category else extraction.confidence
+        policy = evaluate_routing_policy(
+            category_key=category.key,
+            safety=extraction.safety,
+            asset_scope=asset_scope,
+            jurisdiction_known=bool(grievance.location_address),
+            extraction_confidence=confidence,
+        )
+        route = route_for_category(category.key)
+        merged_facts = {
+            **facts,
+            "alternatives": list(extraction.alternatives),
+            "owner_hint": extraction.owner_hint,
+            "requested_action": extraction.requested_action,
+            "landmark": extraction.landmark,
+            "incident_time": extraction.incident_time,
+            "missing_facts": list(extraction.missing_facts),
+            "evidence": list(extraction.evidence),
+            "contradictions": list(extraction.contradictions),
+            "model": extraction.actual_model,
+            "latency_ms": extraction.latency_ms,
+            "escalated": True,
+        }
+        if not facts.get("summary"):
+            merged_facts["summary"] = extraction.summary
+        session.add(
+            GrievanceExtraction(
+                grievance_id=grievance_id,
+                extraction_version="2-escalated",
+                taxonomy_version=TAXONOMY_VERSION,
+                prompt_version="civic-extract-2026-07-v2",
+                provider=extraction.actual_provider or "none",
+                requested_models=list(extraction.requested_models),
+                actual_model=extraction.actual_model,
+                status="completed",
+                latency_ms=extraction.latency_ms,
+                raw_response=extraction.raw,
+                normalized_result=merged_facts,
+                confidence=extraction.confidence,
+                needs_review=policy.needs_official_review,
+            )
+        )
+        await set_grievance_fields(
+            session,
+            grievance_id=grievance_id,
+            category=category.key,
+            category_id=category.key,
+            aggregation_key=category.aggregation_key,
+            department_key=route.department_key if route else category.department_key,
+            priority=policy.priority,
+            term=category.term_hint,
+            confidence=confidence,
+            safety_level=extraction.safety,
+            asset_scope=asset_scope,
+            disposition=policy.disposition,
+            review_status="pending_official" if policy.needs_official_review else "citizen_review",
+            structured_facts=merged_facts,
+            routing_snapshot={
+                "taxonomy_version": TAXONOMY_VERSION,
+                "category_id": category.key,
+                "department_key": route.department_key if route else category.department_key,
+                "owning_agency": route.owning_agency if route else None,
+                "dispatch_enabled": route.dispatch_enabled if route else False,
+                "sla_hours": route.sla_hours if route else None,
+                "disposition": policy.disposition,
+            },
+            flags=flags,
+            state_version=grievance.state_version + 1,
+        )
+        await add_grievance_event(
+            session,
+            grievance_id=grievance_id,
+            status=grievance.status,
+            note="Re-checked with the citizen's correction using a stronger model",
+        )
+        await session.commit()
+        _log_stage(
+            "reextract",
+            grievance_id,
+            category=category.key,
+            dispute="category_dispute" in flags,
+            provider=extraction.actual_provider,
+        )
+
+
 async def finalize_grievance(
     settings: Settings, http_client: httpx.AsyncClient, *, grievance_id: Any
 ) -> FinalizeOutcome:
@@ -340,6 +564,38 @@ async def finalize_grievance(
         grievance = await get_grievance(session, grievance_id=grievance_id)
         if grievance is None:
             raise ValueError(f"grievance {grievance_id} not found")
+
+        if grievance.review_status == "pending_official":
+            await set_grievance_fields(
+                session,
+                grievance_id=grievance_id,
+                status="registered",
+                confirmed_at=utc_now(),
+            )
+            await add_grievance_event(
+                session,
+                grievance_id=grievance_id,
+                status="registered",
+                note="Citizen confirmed; awaiting scoped official review",
+            )
+            await session.commit()
+            return FinalizeOutcome(status="registered", human_id=grievance.human_id)
+        if grievance.disposition in {"redirect", "emergency_redirect", "needs_human_review"}:
+            await set_grievance_fields(
+                session,
+                grievance_id=grievance_id,
+                status="registered",
+                confirmed_at=utc_now(),
+                review_status="pending_official",
+            )
+            await add_grievance_event(
+                session,
+                grievance_id=grievance_id,
+                status="registered",
+                note=f"Awaiting official disposition: {grievance.disposition}",
+            )
+            await session.commit()
+            return FinalizeOutcome(status="registered", human_id=grievance.human_id)
 
         await set_grievance_fields(
             session, grievance_id=grievance_id, status="registered", confirmed_at=utc_now()
@@ -408,6 +664,23 @@ async def dispatch_grievance(
         grievance = await get_grievance(session, grievance_id=grievance_id)
         if grievance is None:
             raise ValueError(f"grievance {grievance_id} not found")
+        snapshot = grievance.routing_snapshot or {}
+        if snapshot and not snapshot.get("dispatch_enabled", False):
+            await set_grievance_fields(
+                session,
+                grievance_id=grievance_id,
+                status="registered",
+                review_status="pending_official",
+            )
+            await add_grievance_event(
+                session,
+                grievance_id=grievance_id,
+                status="registered",
+                note="Live dispatch disabled for demo or unreviewed jurisdiction route",
+            )
+            await session.commit()
+            return FinalizeOutcome(status="registered", human_id=grievance.human_id)
+
         await set_grievance_fields(session, grievance_id=grievance_id, status="dispatching")
         await session.flush()
 

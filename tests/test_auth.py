@@ -9,6 +9,9 @@ from jan_setu.auth import (
     generate_code,
     hash_code,
     normalize_phone,
+    parse_login_approval_id,
+    sanitize_browser_label,
+    build_login_approval_id,
 )
 from jan_setu.config import Settings
 
@@ -65,3 +68,24 @@ def test_decode_access_token_with_wrong_secret_raises():
 
     with pytest.raises(jwt.PyJWTError):
         decode_access_token(other_settings, token)
+
+
+def test_login_approval_button_round_trip():
+    challenge_id = "11111111-1111-4111-8111-111111111111"
+    verifier = "secure-verifier-value"
+    reply_id = build_login_approval_id("login_yes", challenge_id, verifier)
+    assert parse_login_approval_id(reply_id) == ("login_yes", challenge_id, verifier)
+
+
+@pytest.mark.parametrize(
+    "reply_id", [None, "yes", "login_maybe:id:verifier", "login_yes:short:tiny"]
+)
+def test_login_approval_parser_rejects_malformed_ids(reply_id):
+    assert parse_login_approval_id(reply_id) is None
+
+
+def test_browser_label_is_bounded_and_sanitized():
+    label = sanitize_browser_label("  Chrome\n on   macOS  " + "x" * 200)
+    assert label.startswith("Chrome on macOS")
+    assert "\n" not in label
+    assert len(label) <= 128

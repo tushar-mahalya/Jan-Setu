@@ -19,32 +19,44 @@ from typing import Annotated
 from urllib.parse import quote
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Header, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Header, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.whatsapp import copy as msg
 from jan_setu.config import Settings, get_settings
-from jan_setu.db import get_session, utc_now
+from jan_setu.db import AsyncSessionLocal, get_session, utc_now
 from jan_setu.db.models import User
 from jan_setu.repositories import (
+    attach_approval_outbound,
+    consume_login_approval,
     consume_verification,
+    count_recent_login_approvals,
     count_recent_verifications,
+    create_login_approval,
     create_phone_verification,
     create_refresh_token,
     find_active_refresh_token,
     find_pending_verification_by_code_hash,
+    get_linked_user_by_phone,
+    get_login_approval,
     get_phone_verification,
     get_user,
+    latest_inbound_at,
+    mark_login_approval_fallback,
     mark_verification_verified,
     revoke_refresh_token,
+    store_outgoing_pending,
     upsert_user_for_verified_phone,
 )
 from jan_setu.schemas import (
+    ApprovalStatusRequest,
     AuthStatusResponse,
     RefreshResponse,
     RequestCodeRequest,
     RequestCodeResponse,
 )
+from jan_setu.whatsapp.client import WhatsAppCloudClient, build_reply_buttons_payload
+from jan_setu.whatsapp.dispatch import send_pending
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -52,6 +64,37 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O/1/I/L ambiguity
 CODE_LENGTH = 6
 REFRESH_COOKIE_NAME = "refresh_token"
+LOGIN_APPROVAL_YES = "login_yes"
+LOGIN_APPROVAL_NO = "login_no"
+
+
+def sanitize_browser_label(value: str | None) -> str:
+    cleaned = "".join(
+        character for character in (value or "This browser") if character.isprintable()
+    )
+    return " ".join(cleaned.split())[:128] or "This browser"
+
+
+def build_login_approval_id(decision: str, challenge_id: str, verifier: str) -> str:
+    return f"{decision}:{challenge_id}:{verifier}"
+
+
+def parse_login_approval_id(reply_id: str | None) -> tuple[str, str, str] | None:
+    if not reply_id or len(reply_id) > 256:
+        return None
+    parts = reply_id.split(":")
+    if len(parts) != 3 or parts[0] not in (LOGIN_APPROVAL_YES, LOGIN_APPROVAL_NO):
+        return None
+    decision, challenge_id, verifier = parts
+    if len(verifier) < 16 or len(challenge_id) != 36:
+        return None
+    return decision, challenge_id, verifier
+
+
+def _request_ip_hash(request: Request) -> str | None:
+    if not request.client:
+        return None
+    return hashlib.sha256(request.client.host.encode()).hexdigest()
 
 
 class RateLimitExceeded(Exception):
@@ -176,23 +219,115 @@ def _cookie_kwargs(settings: Settings) -> dict:
     }
 
 
+async def _reverse_code_response(
+    session: AsyncSession, settings: Settings, *, phone: str
+) -> RequestCodeResponse:
+    verification_id, code = await create_verification(session, settings, phone=phone)
+    return RequestCodeResponse(
+        verification_id=verification_id,
+        method="reverse_code",
+        code=code,
+        wa_link=wa_deep_link(settings, code),
+    )
+
+
 @router.post("/request-code", response_model=RequestCodeResponse)
 async def request_code(
     body: RequestCodeRequest,
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> RequestCodeResponse:
-    try:
-        verification_id, code = await create_verification(session, settings, phone=body.phone)
-    except RateLimitExceeded as exc:
+    phone = normalize_phone(body.phone)
+    since = utc_now() - timedelta(hours=1)
+    # Approval challenges send a WhatsApp message each, so they count against
+    # the same hourly cap as reverse codes — otherwise the approval path is an
+    # unmetered message-spam vector for any linked phone number.
+    attempts = await count_recent_verifications(
+        session, phone=phone, since=since
+    ) + await count_recent_login_approvals(session, phone=phone, since=since)
+    if attempts >= settings.verification_max_per_hour:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many verification requests for this number. Try again later.",
+        )
+
+    user = await get_linked_user_by_phone(session, phone=phone)
+    last_inbound = await latest_inbound_at(session, contact_id=user.contact_id) if user else None
+    inside_window = bool(
+        last_inbound and utc_now() <= last_inbound + timedelta(hours=settings.service_window_hours)
+    )
+    if user and inside_window and body.browser_nonce:
+        verifier = secrets.token_urlsafe(18)
+        browser_label = sanitize_browser_label(body.browser_label)
+        challenge = await create_login_approval(
+            session,
+            user=user,
+            phone=phone,
+            verifier_hash=hash_code(verifier),
+            browser_nonce_hash=hash_code(body.browser_nonce),
+            browser_label=browser_label,
+            expires_minutes=settings.verification_code_ttl_minutes,
+            request_ip_hash=_request_ip_hash(request),
+        )
+        requested = challenge.requested_at.astimezone().strftime("%d %b %Y, %H:%M")
+        expires = challenge.expires_at.astimezone().strftime("%H:%M")
+        message = (
+            "Approve Jan Setu sign-in?\n\n"
+            f"Browser: {browser_label}\nRequested: {requested}\nExpires: {expires}\n\n"
+            "If this was not you, tap No."
+        )
+        payload = build_reply_buttons_payload(
+            to=phone,
+            body=message,
+            buttons=[
+                (
+                    build_login_approval_id(LOGIN_APPROVAL_YES, str(challenge.id), verifier),
+                    "Yes, it's me",
+                ),
+                (
+                    build_login_approval_id(LOGIN_APPROVAL_NO, str(challenge.id), verifier),
+                    "No, deny",
+                ),
+            ],
+        )
+        row = await store_outgoing_pending(
+            session,
+            contact_id=user.contact_id,
+            conversation_id=None,
+            reply_kind="login_approval",
+            message_type="interactive",
+            text_body=message,
+            payload=payload,
+            idempotency_key=f"login-approval:{challenge.id}",
+            in_response_to_message_id=None,
+        )
+        if row is not None:
+            await attach_approval_outbound(session, challenge_id=challenge.id, message_id=row.id)
+        await session.commit()
+        if row is not None:
+            client = WhatsAppCloudClient(settings, request.app.state.http_client)
+            async with AsyncSessionLocal() as send_session:
+                send_status = await send_pending(send_session, settings, client, row.id)
+            if send_status == "sent":
+                return RequestCodeResponse(
+                    verification_id=challenge.id,
+                    method="whatsapp_approval",
+                    browser_label=browser_label,
+                    requested_at=challenge.requested_at,
+                    expires_at=challenge.expires_at,
+                )
+        await mark_login_approval_fallback(session, challenge_id=challenge.id)
+
+    try:
+        response = await _reverse_code_response(session, settings, phone=phone)
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many verification requests for this number. Try again later.",
         ) from exc
     await session.commit()
-    return RequestCodeResponse(
-        verification_id=verification_id, code=code, wa_link=wa_deep_link(settings, code)
-    )
+    return response
 
 
 @router.get("/status", response_model=AuthStatusResponse)
@@ -220,6 +355,36 @@ async def auth_status(
     access_token, raw_refresh = await issue_tokens(
         session, settings, user_id=str(verification.user_id)
     )
+    await session.commit()
+    response.set_cookie(REFRESH_COOKIE_NAME, raw_refresh, **_cookie_kwargs(settings))
+    return AuthStatusResponse(status="verified", access_token=access_token)
+
+
+@router.post("/approval-status", response_model=AuthStatusResponse)
+async def approval_status(
+    body: ApprovalStatusRequest,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AuthStatusResponse:
+    nonce_hash = hash_code(body.browser_nonce)
+    challenge = await get_login_approval(
+        session, challenge_id=body.verification_id, browser_nonce_hash=nonce_hash
+    )
+    if challenge is None:
+        return AuthStatusResponse(status="expired")
+    if challenge.expires_at <= utc_now() and challenge.status == "pending":
+        return AuthStatusResponse(status="expired")
+    if challenge.status == "denied":
+        return AuthStatusResponse(status="denied")
+    if challenge.status != "approved":
+        return AuthStatusResponse(status="pending" if challenge.status == "pending" else "expired")
+    user_id = await consume_login_approval(
+        session, challenge_id=challenge.id, browser_nonce_hash=nonce_hash
+    )
+    if user_id is None:
+        return AuthStatusResponse(status="expired")
+    access_token, raw_refresh = await issue_tokens(session, settings, user_id=str(user_id))
     await session.commit()
     response.set_cookie(REFRESH_COOKIE_NAME, raw_refresh, **_cookie_kwargs(settings))
     return AuthStatusResponse(status="verified", access_token=access_token)

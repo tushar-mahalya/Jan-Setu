@@ -74,14 +74,24 @@ class Settings(BaseSettings):
     sarvam_min_interval_seconds: float = 1.0
     sarvam_timeout_seconds: float = 30.0
 
-    # LLM classification (OpenRouter). Free models rotate, so the chain is
-    # config-driven; classify.py falls through it and degrades gracefully.
+    # LLM extraction. Groq is the primary provider (fast, 1K requests/day per
+    # model on the free tier, strict json_schema on the gpt-oss models);
+    # OpenRouter's free chain is the cross-provider failsafe and the only
+    # vision-capable path (Groq currently serves no vision models).
+    groq_api_key: SecretStr | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_models: str = "openai/gpt-oss-120b,openai/gpt-oss-20b,llama-3.3-70b-versatile"
+    # gpt-oss-120b free tier allows 8K tokens/min; ~2K tokens per extraction
+    # means sustained traffic must stay under ~4 requests/min.
+    groq_min_interval_seconds: float = 6.0
+    groq_timeout_seconds: float = 30.0
+
+    # OpenRouter free models rotate, so the chain is config-driven. The API
+    # caps the `models` array at 3 entries; classify.py enforces the cap.
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_models: str = (
-        "google/gemma-4-26b-a4b-it:free,"
-        "openai/gpt-oss-120b:free,"
-        "nvidia/nemotron-3-nano-30b-a3b:free"
+        "google/gemma-4-26b-a4b-it:free,google/gemma-4-31b-it:free,openrouter/free"
     )
     openrouter_min_interval_seconds: float = 3.0
     openrouter_timeout_seconds: float = 30.0
@@ -132,6 +142,7 @@ class Settings(BaseSettings):
         "whatsapp_access_token",
         "api_key",
         "sarvam_api_key",
+        "groq_api_key",
         "openrouter_api_key",
         mode="before",
     )
@@ -166,6 +177,10 @@ class Settings(BaseSettings):
     @property
     def openrouter_model_chain(self) -> list[str]:
         return [model.strip() for model in self.openrouter_models.split(",") if model.strip()]
+
+    @property
+    def groq_model_chain(self) -> list[str]:
+        return [model.strip() for model in self.groq_models.split(",") if model.strip()]
 
     def insecure_production_defaults(self) -> list[str]:
         """Dev-default secrets still active. Checked once at startup and logged

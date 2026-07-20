@@ -21,6 +21,18 @@ AUDIO_MIME_TYPES = frozenset(
     {"audio/ogg", "audio/opus", "audio/mpeg", "audio/mp3", "audio/wav", "audio/webm", "audio/mp4"}
 )
 IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+EXTENSIONS_BY_MIME_TYPE = {
+    "audio/mp4": ".m4a",
+    "audio/ogg": ".ogg",
+    "audio/webm": ".webm",
+}
+
+
+def normalize_mime_type(mime_type: str | None) -> str | None:
+    """Strip optional MIME parameters such as a browser-supplied codec."""
+    if not mime_type:
+        return None
+    return mime_type.partition(";")[0].strip().lower() or None
 
 
 class UploadTooLarge(ValueError):
@@ -38,7 +50,7 @@ def validate_upload(
     allowed type/size for its kind ("audio" | "image")."""
     allowed = AUDIO_MIME_TYPES if kind == "audio" else IMAGE_MIME_TYPES
     max_bytes = settings.max_audio_bytes if kind == "audio" else settings.max_image_bytes
-    if mime_type not in allowed:
+    if normalize_mime_type(mime_type) not in allowed:
         raise UploadTypeNotAllowed(f"{kind} type {mime_type!r} is not allowed")
     if size_bytes > max_bytes:
         raise UploadTooLarge(f"{kind} upload of {size_bytes} bytes exceeds the {max_bytes} limit")
@@ -96,7 +108,8 @@ async def upload_whatsapp_media(
 
 
 def guess_extension(mime_type: str) -> str:
-    return mimetypes.guess_extension(mime_type) or ""
+    normalized = normalize_mime_type(mime_type) or ""
+    return EXTENSIONS_BY_MIME_TYPE.get(normalized) or mimetypes.guess_extension(normalized) or ""
 
 
 def new_filename(mime_type: str) -> str:

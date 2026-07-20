@@ -7,6 +7,7 @@ accepted the message — delivery/read are tracked later via status webhooks.
 """
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -15,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.config import Settings
 from jan_setu.db import utc_now
-from jan_setu.db.models import Conversation, WhatsAppMessage
+from jan_setu.db.models import Conversation, LoginApprovalChallenge, WhatsAppMessage
 from jan_setu.repositories import claim_outbound, fetch_sweepable_outbound, mark_outbound
 from jan_setu.whatsapp.client import WhatsAppCloudClient, WhatsAppClientUnavailable
 
@@ -74,6 +75,41 @@ async def send_pending(
         await session.commit()
         logger.warning("outbound_blocked_24h", extra={"reply_kind": message.reply_kind})
         return "blocked_24h"
+
+    if message.reply_kind == "login_approval":
+        challenge = (
+            await session.execute(
+                select(LoginApprovalChallenge).where(
+                    LoginApprovalChallenge.approval_outbound_message_id == message.id,
+                    LoginApprovalChallenge.status == "pending",
+                    LoginApprovalChallenge.expires_at > utc_now(),
+                )
+            )
+        ).scalar_one_or_none()
+        if challenge is None:
+            await mark_outbound(session, message_id=message_id, status="failed")
+            await session.commit()
+            return "failed"
+        latest_inbound = (
+            await session.execute(
+                select(WhatsAppMessage.received_at)
+                .where(
+                    WhatsAppMessage.contact_id == challenge.contact_id,
+                    WhatsAppMessage.direction == "incoming",
+                )
+                .order_by(WhatsAppMessage.received_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest_inbound is None or utc_now() > latest_inbound + timedelta(
+            hours=settings.service_window_hours
+        ):
+            await mark_outbound(session, message_id=message_id, status="blocked_24h")
+            challenge.status = "fallback"
+            challenge.decided_at = utc_now()
+            await session.commit()
+            logger.warning("login_approval_blocked_24h")
+            return "blocked_24h"
 
     payload = message.raw_payload
     # Commit the lease before the HTTP call so the send is durable and visible to

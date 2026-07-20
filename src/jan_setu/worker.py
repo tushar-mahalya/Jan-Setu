@@ -14,7 +14,13 @@ import httpx
 
 from jan_setu.config import configure_logging, get_settings
 from jan_setu.db import AsyncSessionLocal
-from jan_setu.pipeline import sweep_expired_windows, sweep_stuck_dispatching
+from jan_setu.pipeline import (
+    reextract_grievance,
+    run_pipeline,
+    sweep_expired_windows,
+    sweep_stuck_dispatching,
+)
+from jan_setu.repositories import claim_pipeline_jobs, complete_pipeline_job, fail_pipeline_job
 from jan_setu.whatsapp.client import WhatsAppCloudClient
 from jan_setu.whatsapp.dispatch import sweep_pending_outbound
 from jan_setu.whatsapp.processing import process_pending_events, sweep_stuck_processing
@@ -38,6 +44,32 @@ async def run_worker() -> None:
     ) as http_client:
         client = WhatsAppCloudClient(settings, http_client)
         while True:
+            async with AsyncSessionLocal() as session:
+                jobs = await claim_pipeline_jobs(session, limit=settings.worker_batch_size)
+                await session.commit()
+            for job in jobs:
+                try:
+                    if job.stage == "reextract":
+                        await reextract_grievance(job.grievance_id, settings, http_client)
+                    else:
+                        await run_pipeline(job.grievance_id, settings, http_client)
+                except Exception as exc:
+                    async with AsyncSessionLocal() as session:
+                        persisted = await session.get(type(job), job.id)
+                        if persisted is not None:
+                            await fail_pipeline_job(session, job=persisted, error=exc)
+                            await session.commit()
+                    logger.exception(
+                        "worker_pipeline_job_failed",
+                        extra={"grievance_id": str(job.grievance_id), "job_id": str(job.id)},
+                    )
+                else:
+                    async with AsyncSessionLocal() as session:
+                        persisted = await session.get(type(job), job.id)
+                        if persisted is not None:
+                            await complete_pipeline_job(session, job=persisted)
+                            await session.commit()
+
             try:
                 await process_pending_events(
                     settings, http_client, batch_size=settings.worker_batch_size
