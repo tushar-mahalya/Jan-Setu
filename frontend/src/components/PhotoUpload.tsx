@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useI18n } from "../i18n/I18nContext";
 
 interface Props { value: File | null; onChange: (file: File | null) => void }
 
 export default function PhotoUpload({ value, onChange }: Props) {
+  const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
   const inputId = useId();
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -19,11 +21,11 @@ export default function PhotoUpload({ value, onChange }: Props) {
     if (!file) return;
     const allowed = ["image/jpeg", "image/png", "image/webp"];
     if (!allowed.includes(file.type)) {
-      setError("Choose a JPEG, PNG, or WebP image.");
+      setError(t.photoTypeError);
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      setError("Photo must be 5 MiB or smaller.");
+      setError(t.photoSizeError);
       return;
     }
     setError(null);
@@ -44,17 +46,17 @@ export default function PhotoUpload({ value, onChange }: Props) {
     {error && <p id={`${inputId}-error`} className="field-error" role="alert" tabIndex={-1}>{error}</p>}
     {!previewUrl && <label className="photo-drop" data-dragging={dragging || undefined} htmlFor={inputId} onDragEnter={() => setDragging(true)} onDragLeave={() => setDragging(false)} onDragOver={(event) => event.preventDefault()} onDrop={drop}>
       <span className="photo-drop__artifact" aria-hidden="true"><i /><b>+</b></span>
-      <strong>Add a clear photo <span lang="hi">/ फोटो जोड़ें</span></strong>
-      <span id={`${inputId}-hint`} className="field__hint">Take a photo or choose JPEG, PNG, or WebP · maximum 5 MiB</span>
-      <span className="photo-drop__action">Choose photo</span>
+      <strong>{t.photoDropTitle}</strong>
+      <span id={`${inputId}-hint`} className="field__hint">{t.photoDropHint}</span>
+      <span className="photo-drop__action">{t.choosePhoto}</span>
       <input id={inputId} className="visually-hidden" ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" aria-invalid={Boolean(error)} aria-describedby={descriptionIds} capture="environment" onChange={handleFile} />
     </label>}
     {previewUrl && <figure className="photo-upload__preview">
-      <img src={previewUrl} alt="Selected photo evidence for this complaint" width="720" height="480" />
-      <figcaption>{value?.name} · {value ? `${(value.size / 1024 / 1024).toFixed(1)} MB` : "Photo selected"}</figcaption>
+      <img src={previewUrl} alt={t.photoAlt} width="720" height="480" />
+      <figcaption>{value?.name} · {value ? `${(value.size / 1024 / 1024).toFixed(1)} MB` : t.photoSelected}</figcaption>
       <div className="photo-preview-actions">
-        <button type="button" className="btn btn--secondary btn-sm" onClick={() => inputRef.current?.click()}>Change</button>
-        <button type="button" className="btn-link" onClick={remove}>Remove</button>
+        <button type="button" className="btn btn--secondary btn-sm" onClick={() => inputRef.current?.click()}>{t.changePhoto}</button>
+        <button type="button" className="btn-link" onClick={remove}>{t.removePhoto}</button>
       </div>
       <input id={`${inputId}-replace`} className="visually-hidden" ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp" aria-invalid={Boolean(error)} aria-describedby={descriptionIds} capture="environment" onChange={handleFile} />
     </figure>}

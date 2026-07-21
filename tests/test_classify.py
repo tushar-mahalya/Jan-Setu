@@ -1,3 +1,4 @@
+from jan_setu.config import Settings
 from jan_setu.pipeline.classify import parse_classification, parse_extraction, parse_image_match
 from jan_setu.pipeline.taxonomy import CATEGORIES
 
@@ -179,6 +180,86 @@ def test_parse_image_match_extracts_json_wrapped_in_prose_and_code_fence():
     assert result is not None
     assert result.matches is True
     assert result.confidence == 0.6
+
+
+def test_combines_typed_text_and_every_voice_transcript_before_extraction(monkeypatch):
+    import asyncio
+
+    from jan_setu.pipeline.core import _combine_issue_text
+    from jan_setu.pipeline.stt import TranscriptionResult
+
+    async def download(*_args):
+        return b"voice", "audio/webm"
+
+    results = iter(
+        [
+            TranscriptionResult(ok=True, text="स्ट्रीट लाइट बंद है", detected_language="hi-IN"),
+            TranscriptionResult(ok=True, text="near the bus stop", detected_language="en-IN"),
+        ]
+    )
+
+    async def transcribe(*_args, **_kwargs):
+        return next(results)
+
+    monkeypatch.setattr("jan_setu.pipeline.core.download_whatsapp_media", download)
+    monkeypatch.setattr("jan_setu.pipeline.core.transcribe_clip", transcribe)
+    combined, language, flags, transcripts = asyncio.run(
+        _combine_issue_text(
+            object(),
+            Settings(_env_file=None),
+            object(),
+            [
+                {"type": "text", "text": "Please fix this urgently."},
+                {"type": "audio", "media_id": "voice-one"},
+                {"type": "voice", "media_id": "voice-two"},
+            ],
+        )
+    )
+
+    assert combined == "Please fix this urgently.\nस्ट्रीट लाइट बंद है\nnear the bus stop"
+    assert language == "hi-IN"
+    assert flags == []
+    assert [item["text"] for item in transcripts] == ["स्ट्रीट लाइट बंद है", "near the bus stop"]
+
+
+def test_stt_uses_original_language_transcription(monkeypatch):
+    import asyncio
+
+    from jan_setu.pipeline.stt import transcribe_clip
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"transcript": "स्ट्रीट लाइट खराब है", "language_code": "hi-IN"}
+
+    class Client:
+        async def post(self, url, **kwargs):
+            assert kwargs["data"] == {"model": "saaras:v3", "mode": "transcribe"}
+            assert kwargs["files"]["file"][2] == "audio/webm"
+            return Response()
+
+    class Session:
+        pass
+
+    async def no_wait(*_args):
+        return 0
+
+    monkeypatch.setattr("jan_setu.pipeline.stt.reserve_slot", no_wait)
+    result = asyncio.run(
+        transcribe_clip(
+            Session(),
+            Settings(_env_file=None, sarvam_api_key="key"),
+            Client(),
+            audio_bytes=b"voice",
+            mime_type="audio/webm",
+        )
+    )
+
+    assert result.ok
+    assert result.text == "स्ट्रीट लाइट खराब है"
+    assert result.detected_language == "hi-IN"
 
 
 def _settings(**overrides):

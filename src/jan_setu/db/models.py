@@ -200,7 +200,9 @@ class Grievance(TimestampMixin, Base):
     # mime_type per message) — the pipeline's transcribe+combine stage reads this
     # directly rather than re-joining whatsapp_messages.
     issue_messages: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
-    issue_text: Mapped[str | None] = mapped_column(Text)  # combined English text (typed + STT)
+    issue_text: Mapped[str | None] = mapped_column(
+        Text
+    )  # combined typed text + original-language STT
     source_language: Mapped[str | None] = mapped_column(String(16))
     photo_media_id: Mapped[str | None] = mapped_column(String(255))
     photo_path: Mapped[str | None] = mapped_column(Text)

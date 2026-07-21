@@ -1,36 +1,38 @@
 import type { GrievanceStatus } from "../api/types";
+import { useI18n, type Catalog } from "../i18n/I18nContext";
 
 type Tone = "neutral" | "info" | "warning" | "success";
-interface StatusMeta { label: string; hindi: string; tone: Tone; live?: boolean }
+interface StatusMeta { key: keyof Catalog; tone: Tone; live?: boolean; fallback?: string }
 
-const STATUS_META: Record<string, StatusMeta> = {
-  draft: { label: "Draft", hindi: "प्रारूप", tone: "neutral" },
-  processing: { label: "Processing", hindi: "जाँच जारी", tone: "info", live: true },
-  awaiting_confirmation: { label: "Awaiting confirmation", hindi: "पुष्टि बाकी", tone: "info" },
-  photo_mismatch: { label: "Photo needs review", hindi: "फोटो की जाँच करें", tone: "warning" },
-  registered: { label: "Registered", hindi: "दर्ज", tone: "success" },
-  pending_window: { label: "Grouping reports", hindi: "रिपोर्ट जोड़ी जा रही हैं", tone: "info", live: true },
-  dispatching: { label: "Sending to department", hindi: "विभाग को भेजा जा रहा है", tone: "info", live: true },
-  submitted: { label: "Submitted", hindi: "जमा", tone: "success" },
-  duplicate: { label: "Also reported", hindi: "पहले भी दर्ज", tone: "info" },
-  cancelled: { label: "Cancelled", hindi: "रद्द", tone: "neutral" },
-  dispatch_failed: { label: "Dispatch delayed", hindi: "भेजने में देरी", tone: "warning" },
+const STATUS_META: Record<string, Omit<StatusMeta, "fallback">> = {
+  draft: { key: "stDraft", tone: "neutral" },
+  processing: { key: "stProcessing", tone: "info", live: true },
+  awaiting_confirmation: { key: "stAwaiting", tone: "info" },
+  photo_mismatch: { key: "stPhotoMismatch", tone: "warning" },
+  registered: { key: "stRegistered", tone: "success" },
+  pending_window: { key: "stGrouping", tone: "info", live: true },
+  dispatching: { key: "stDispatching", tone: "info", live: true },
+  submitted: { key: "stSubmitted", tone: "success" },
+  duplicate: { key: "stDuplicate", tone: "info" },
+  cancelled: { key: "stCancelled", tone: "neutral" },
+  dispatch_failed: { key: "stDispatchFailed", tone: "warning" },
 };
 
 export function metaForStatus(status: string): StatusMeta {
+  const meta = STATUS_META[status as GrievanceStatus];
+  if (meta) return meta;
   const fallbackLabel = status
     .replace(/_/g, " ")
     .replace(/\b\w/g, (character) => character.toUpperCase());
-  return STATUS_META[status as GrievanceStatus] ?? {
-    label: fallbackLabel || "Status", hindi: "स्थिति", tone: "neutral",
-  };
+  return { key: "stFallback", tone: "neutral", fallback: fallbackLabel || undefined };
 }
 
 export default function StatusChip({ status }: { status: string }) {
-  const { label, hindi, tone, live } = metaForStatus(status);
+  const { t } = useI18n();
+  const meta = metaForStatus(status);
   return (
-    <span className={`status-chip status-chip--${tone}`} data-live={live ? "true" : undefined}>
-      <span>{label}</span><span className="status-chip__translation" lang="hi">{hindi}</span>
+    <span className={`status-chip status-chip--${meta.tone}`} data-live={meta.live ? "true" : undefined}>
+      <span>{meta.fallback ?? t[meta.key]}</span>
     </span>
   );
 }

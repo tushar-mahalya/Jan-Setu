@@ -83,8 +83,10 @@ services:
       UPLOAD_DIR: /data/uploads
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # The API runs on the host in dev, so bind its artifact directory here.
+    # A named volume would make host uploads/PDFs invisible to this worker.
     volumes:
-      - uploads:/data/uploads
+      - ./data/uploads:/data/uploads
     restart: unless-stopped
     depends_on:
       postgres:

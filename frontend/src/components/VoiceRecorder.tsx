@@ -1,6 +1,26 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type { Transcript, TranscriptionPreview } from "../api/types";
+import { apiPostForm } from "../api/client";
+import { getAccessToken } from "../auth/AuthContext";
+import { useI18n, fill } from "../i18n/I18nContext";
 
-interface Props { clips: File[]; onClipsChange: (clips: File[]) => void }
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
+
+export interface VoiceClip {
+  file: File;
+  recordingId: string;
+  segmentIndex: number;
+}
+
+interface Props {
+  clips: VoiceClip[];
+  onClipsChange: (clips: VoiceClip[]) => void;
+  transcripts?: Transcript[];
+  showTranscripts?: boolean;
+  readOnly?: boolean;
+  sourceUrls?: string[];
+  previewEnabled?: boolean;
+}
 type RecorderPhase = "idle" | "requesting" | "recording" | "stopping";
 type StopIntent = "rotate" | "finish" | null;
 
@@ -18,31 +38,56 @@ function formatTime(seconds: number) {
   return `${String(Math.floor(wholeSeconds / 60)).padStart(2, "0")}:${String(wholeSeconds % 60).padStart(2, "0")}`;
 }
 
-function RecordedClip({ clip, index, onRemove }: { clip: File; index: number; onRemove: () => void }) {
+function languageLabel(language: string) {
+  try { return new Intl.DisplayNames(["en"], { type: "language" }).of(language.split("-")[0]) ?? language; }
+  catch { return language; }
+}
+
+function RecordedClip({ clip, index, onRemove, transcript, showTranscript, sourceUrl, preview }: { clip: VoiceClip; index: number; onRemove?: () => void; transcript?: Transcript; showTranscript?: boolean; sourceUrl?: string; preview?: TranscriptionPreview }) {
+  const { t } = useI18n();
   const [url, setUrl] = useState("");
   const [duration, setDuration] = useState<number | null>(null);
 
   useEffect(() => {
-    const objectUrl = URL.createObjectURL(clip);
+    if (sourceUrl) {
+      let cancelled = false;
+      let objectUrl = "";
+      void fetch(`${API_BASE}${sourceUrl}`, { headers: { Authorization: `Bearer ${getAccessToken() ?? ""}` }, credentials: "include" })
+        .then((response) => response.ok ? response.blob() : Promise.reject())
+        .then((blob) => {
+          objectUrl = URL.createObjectURL(blob);
+          if (!cancelled) setUrl(objectUrl);
+        })
+        .catch(() => { if (!cancelled) setUrl(""); });
+      return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    }
+    const objectUrl = URL.createObjectURL(clip.file);
     setUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
-  }, [clip]);
+  }, [clip.file, sourceUrl]);
 
   return <li className="voice-recorder__item">
     <div className="voice-recorder__clip-meta">
       <span aria-hidden="true">♪</span>
-      <div><strong>Voice note {index + 1}</strong>{duration !== null && <small>{formatTime(duration)}</small>}</div>
+      <div><strong>{fill(t.voiceNoteN, { n: index + 1 })}</strong>{duration !== null && <small>{formatTime(duration)}</small>}</div>
     </div>
     <audio controls src={url || undefined} preload="metadata" onLoadedMetadata={(event) => {
       const nextDuration = event.currentTarget.duration;
       if (Number.isFinite(nextDuration)) setDuration(nextDuration);
-    }} aria-label={`Voice note ${index + 1}`} />
-    <button type="button" className="btn-link" onClick={onRemove}>Remove / हटाएँ</button>
+    }} aria-label={fill(t.voiceNoteN, { n: index + 1 })} />
+    {(showTranscript || preview) && <div className="voice-recorder__transcript" aria-live="polite">
+      <strong>{t.whatWeHeard}{(transcript?.language ?? preview?.language) && <> · {languageLabel(transcript?.language ?? preview?.language ?? "und")}</>}</strong>
+      {transcript ? <p>{transcript.text}</p> : preview?.status === "final" && preview.text ? <p>{preview.text}</p> : <p className="muted-note">{t.transcriptLater}</p>}
+    </div>}
+    {onRemove && <button type="button" className="btn-link" onClick={onRemove}>{t.removeClip}</button>}
   </li>;
 }
 
-export default function VoiceRecorder({ clips, onClipsChange }: Props) {
+export default function VoiceRecorder({ clips, onClipsChange, transcripts = [], showTranscripts = false, readOnly = false, sourceUrls = [], previewEnabled = false }: Props) {
+  const { t } = useI18n();
   const [phase, setPhase] = useState<RecorderPhase>("idle");
+  const [previews, setPreviews] = useState<Record<string, TranscriptionPreview>>({});
+  const previewKey = (clip: VoiceClip) => `${clip.recordingId}:${clip.segmentIndex}`;
   const [elapsed, setElapsed] = useState(0);
   const [levels, setLevels] = useState(() => Array(WAVEFORM_BARS).fill(0.08));
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +96,8 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const clipsRef = useRef(clips);
-  const pendingClipsRef = useRef<File[]>([]);
+  const pendingClipsRef = useRef<VoiceClip[]>([]);
+  const recordingIdRef = useRef("");
   const stopIntentRef = useRef<StopIntent>(null);
   const startedAtRef = useRef(0);
   const splitStartedRef = useRef(false);
@@ -77,7 +123,19 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
     if (!mountedRef.current || session !== sessionRef.current) return;
     const completedClips = pendingClipsRef.current;
     pendingClipsRef.current = [];
-    if (completedClips.length) onClipsChange([...clipsRef.current, ...completedClips]);
+    if (completedClips.length) {
+      onClipsChange([...clipsRef.current, ...completedClips]);
+      if (previewEnabled) {
+        for (const clip of completedClips) {
+          const form = new FormData();
+          form.append("audio", clip.file, clip.file.name);
+          const key = `${clip.recordingId}:${clip.segmentIndex}`;
+          void apiPostForm<TranscriptionPreview>("/api/grievances/transcription-preview", form)
+            .then((preview) => setPreviews((current) => ({ ...current, [key]: preview })))
+            .catch(() => setPreviews((current) => ({ ...current, [key]: { status: "unavailable" } })));
+        }
+      }
+    }
     stopIntentRef.current = null;
     recorderRef.current = null;
     phaseRef.current = "idle";
@@ -98,7 +156,7 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
     };
     recorder.onerror = () => {
       if (!mountedRef.current || session !== sessionRef.current) return;
-      setError("Recording stopped unexpectedly. Please try again. / रिकॉर्डिंग रुक गई। कृपया फिर कोशिश करें।");
+      setError(t.voiceInterrupted);
       stopIntentRef.current = "finish";
       phaseRef.current = "stopping";
       setPhase("stopping");
@@ -109,11 +167,15 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
       const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" });
       if (isCurrent && blob.size) {
         const extension = blob.type.includes("ogg") ? "ogg" : blob.type.includes("mp4") ? "m4a" : "webm";
-        pendingClipsRef.current.push(new File(
-          [blob],
-          `voice-note-${session}-${segmentNumber}.${extension}`,
-          { type: blob.type, lastModified: Date.now() },
-        ));
+        pendingClipsRef.current.push({
+          file: new File(
+            [blob],
+            `voice-note-${session}-${segmentNumber}.${extension}`,
+            { type: blob.type, lastModified: Date.now() },
+          ),
+          recordingId: recordingIdRef.current,
+          segmentIndex: segmentNumber - 1,
+        });
       }
       if (recorderRef.current === recorder) recorderRef.current = null;
       if (!isCurrent) return;
@@ -122,7 +184,7 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
         try {
           startSegment(session, mimeType);
         } catch {
-          setError("Could not continue recording. Your first part is saved. / रिकॉर्डिंग जारी नहीं रह सकी।");
+          setError(t.voiceCannotContinue);
           finishSession(session);
         }
         return;
@@ -159,7 +221,7 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
     if (phaseRef.current !== "idle") return;
     setError(null);
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setError("Voice recording is not supported. Type your description instead. / कृपया विवरण लिखें।");
+      setError(t.voiceUnsupported);
       return;
     }
 
@@ -168,6 +230,7 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
     setPhase("requesting");
     setElapsed(0);
     pendingClipsRef.current = [];
+    recordingIdRef.current = crypto.randomUUID();
     stopIntentRef.current = null;
     splitStartedRef.current = false;
 
@@ -202,7 +265,7 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
       if (!mountedRef.current || session !== sessionRef.current) return;
       phaseRef.current = "idle";
       setPhase("idle");
-      setError("Microphone access is off. Allow it in browser settings or type your description. / माइक्रोफोन अनुमति दें या विवरण लिखें।");
+      setError(t.micOff);
     }
   };
 
@@ -253,45 +316,51 @@ export default function VoiceRecorder({ clips, onClipsChange }: Props) {
 
   const isBusy = phase === "requesting" || phase === "stopping";
   const status = phase === "requesting"
-    ? "Waiting for microphone… / माइक्रोफोन की अनुमति…"
+    ? t.micWaiting
     : phase === "recording"
-      ? "Recording… / रिकॉर्डिंग जारी…"
+      ? t.recordingNow
       : phase === "stopping"
-        ? "Saving voice note… / वॉइस नोट सहेजा जा रहा है…"
-        : "Record voice note / वॉइस नोट";
+        ? t.savingNote
+        : t.recordCta;
 
   return <div className="voice-recorder" data-phase={phase}>
-    <div className="voice-recorder__controls">
-      <button
-        type="button"
-        className="record-btn"
-        data-recording={phase === "recording"}
-        onClick={phase === "recording" ? stopRecording : startRecording}
-        disabled={isBusy}
-        aria-label={phase === "recording" ? "Stop recording" : status}
-      >
-        <span className="record-btn__shape" aria-hidden="true" />
-      </button>
-      <div className="voice-recorder__status">
-        <strong>{status}</strong>
-        <p className="record-timer"><span>{formatTime(elapsed)}</span><span aria-hidden="true"> / </span><span>{formatTime(MAX_SECONDS)}</span></p>
+    {!readOnly && <>
+      <div className="voice-recorder__controls">
+        <button
+          type="button"
+          className="record-btn"
+          data-recording={phase === "recording"}
+          onClick={phase === "recording" ? stopRecording : startRecording}
+          disabled={isBusy}
+          aria-label={phase === "recording" ? t.stopRecordingAria : status}
+        >
+          <span className="record-btn__shape" aria-hidden="true" />
+        </button>
+        <div className="voice-recorder__status">
+          <strong>{status}</strong>
+          <p className="record-timer"><span>{formatTime(elapsed)}</span><span aria-hidden="true"> / </span><span>{formatTime(MAX_SECONDS)}</span></p>
+        </div>
+        <div className="voice-waveform" aria-hidden="true">
+          {levels.map((level, index) => <i key={index} style={{ "--voice-level": level } as CSSProperties} />)}
+        </div>
       </div>
-      <div className="voice-waveform" aria-hidden="true">
-        {levels.map((level, index) => <i key={index} style={{ "--voice-level": level } as CSSProperties} />)}
+      <div className="voice-recorder__message" aria-live="polite">
+        {phase === "recording" && elapsed >= SEGMENT_SECONDS
+          ? <span className="voice-recorder__warning">{t.voiceThirtyLeft}</span>
+          : <span>{t.voiceMax}</span>}
       </div>
-    </div>
-    <div className="voice-recorder__message" aria-live="polite">
-      {phase === "recording" && elapsed >= SEGMENT_SECONDS
-        ? <span className="voice-recorder__warning">30 seconds left — recording will stop automatically.</span>
-        : <span>Maximum 60 seconds · recording stops automatically when time is up.</span>}
-    </div>
-    {error && <p className="field-error" role="alert">{error}</p>}
-    {clips.length > 0 && <ul className="voice-recorder__list" aria-label="Attached voice notes">
+      {error && <p className="field-error" role="alert">{error}</p>}
+    </>}
+    {clips.length > 0 && <ul className="voice-recorder__list" aria-label={readOnly ? t.notesTranscriptsAria : t.attachedNotesAria}>
       {clips.map((clip, index) => <RecordedClip
         clip={clip}
         index={index}
-        key={`${clip.name}-${clip.lastModified}`}
-        onRemove={() => onClipsChange(clipsRef.current.filter((_, clipIndex) => clipIndex !== index))}
+        key={`${clip.recordingId}-${clip.segmentIndex}`}
+        transcript={transcripts.find((item) => item.recording_id === clip.recordingId && Number(item.segment_index) === clip.segmentIndex) ?? transcripts[index]}
+        showTranscript={showTranscripts}
+        sourceUrl={sourceUrls[index]}
+        preview={previews[previewKey(clip)]}
+        onRemove={readOnly ? undefined : () => onClipsChange(clipsRef.current.filter((_, clipIndex) => clipIndex !== index))}
       />)}
     </ul>}
   </div>;

@@ -46,14 +46,26 @@ def test_clear_public_municipal_issue_can_enter_normal_flow():
     assert not decision.needs_official_review
 
 
-def test_unknown_ownership_requires_review():
+def test_unknown_ownership_does_not_block_a_configured_municipal_route():
     decision = evaluate_routing_policy(
         category_key="pothole_surface_damage",
         asset_scope="unknown",
-        extraction_confidence=0.9,
+        extraction_confidence=0.2,
     )
-    assert decision.disposition == "needs_human_review"
-    assert decision.needs_official_review
+    assert decision.disposition == "municipal_ticket"
+    assert not decision.needs_official_review
+
+
+def test_possible_safety_is_filed_with_expedited_handling():
+    decision = evaluate_routing_policy(
+        category_key="streetlight_out",
+        safety="possible",
+        asset_scope="unknown",
+        extraction_confidence=0.2,
+    )
+    assert decision.disposition == "municipal_ticket_and_escalate"
+    assert decision.priority == "priority"
+    assert not decision.needs_official_review
 
 
 def test_external_authority_category_redirects():

@@ -26,7 +26,7 @@ from jan_setu.db import AsyncSessionLocal, utc_now
 from jan_setu.pipeline.dedup import find_duplicate
 from jan_setu.pipeline.dispatchers import DispatchError, get_dispatcher
 from jan_setu.pipeline.geocoding import reverse_geocode_cached
-from jan_setu.pipeline.media import download_whatsapp_media, save_upload
+from jan_setu.pipeline.media import artifact_path, download_whatsapp_media, save_upload
 from jan_setu.db.models import Contact, Grievance, GrievanceExtraction
 from jan_setu.pipeline.pdfgen import PdfSummary, build_grievance_pdf
 from jan_setu.repositories import (
@@ -81,15 +81,19 @@ async def _combine_issue_text(
     settings: Settings,
     http_client: httpx.AsyncClient,
     issue_messages: list[dict[str, Any]],
-) -> tuple[str, str | None, list[str]]:
+) -> tuple[str, str | None, list[str], list[dict[str, Any]]]:
     """Concatenate typed text + transcribed English audio, in chronological
     order (the messages are already appended in arrival order). Each audio
     entry is either a WhatsApp ``media_id`` (downloaded fresh — media URLs
-    expire) or a web upload already saved to disk (``local_path``). Returns
-    (combined_text, detected_language, flags)."""
+    expire) or a web upload already saved to disk (``local_path``). The
+    combined text is what reaches extraction, while transcript metadata keeps
+    original-language voice evidence available to citizens and officials.
+    Returns (combined_text, detected_language, flags, transcripts)."""
     parts: list[str] = []
     detected_language: str | None = None
     flags: list[str] = []
+    transcripts: list[dict[str, str]] = []
+    audio_index = 0
     for message in issue_messages:
         message_type = message.get("type")
         if message_type == "text" and message.get("text"):
@@ -97,9 +101,11 @@ async def _combine_issue_text(
             continue
         if message_type not in ("audio", "voice"):
             continue
+        audio_index += 1
         try:
             if message.get("local_path"):
-                audio_bytes = Path(message["local_path"]).read_bytes()
+                audio_path = artifact_path(settings, message["local_path"])
+                audio_bytes = audio_path.read_bytes()
                 mime_type = message.get("mime_type") or "audio/ogg"
             elif message.get("media_id"):
                 audio_bytes, mime_type = await download_whatsapp_media(
@@ -107,7 +113,15 @@ async def _combine_issue_text(
                 )
             else:
                 continue
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError) as exc:
+            logger.warning(
+                "audio_read_or_download_failed",
+                extra={
+                    "local_path": message.get("local_path"),
+                    "media_id": message.get("media_id"),
+                    "error_type": type(exc).__name__,
+                },
+            )
             flags.append("transcription_failed")
             continue
         result = await transcribe_clip(
@@ -116,9 +130,21 @@ async def _combine_issue_text(
         if result.ok and result.text:
             parts.append(result.text)
             detected_language = detected_language or result.detected_language
+            transcripts.append(
+                {
+                    "recording_id": str(message.get("recording_id") or f"legacy-{audio_index}"),
+                    "segment_index": int(message.get("segment_index") or 0),
+                    "text": result.text,
+                    "language": result.detected_language or "und",
+                    "mime_type": mime_type,
+                    "provider": "rest_sarvam",
+                    "model": settings.sarvam_model,
+                    "state": "final",
+                }
+            )
         else:
             flags.append("transcription_failed")
-    return "\n".join(parts).strip(), detected_language, flags
+    return "\n".join(parts).strip(), detected_language, flags, transcripts
 
 
 async def _fetch_photo(
@@ -194,7 +220,7 @@ async def run_pipeline(
         if grievance is None:
             raise ValueError(f"grievance {grievance_id} not found")
 
-        text, detected_language, stt_flags = await _combine_issue_text(
+        text, detected_language, stt_flags, transcripts = await _combine_issue_text(
             session, settings, http_client, grievance.issue_messages
         )
         _log_stage("transcribe", grievance_id, flags=stt_flags)
@@ -258,6 +284,11 @@ async def run_pipeline(
         )
         structured_facts = {
             "summary": extraction.summary,
+            "original_text": "\n".join(
+                message["text"].strip()
+                for message in grievance.issue_messages
+                if message.get("type") == "text" and message.get("text", "").strip()
+            ),
             "alternatives": list(extraction.alternatives),
             "owner_hint": extraction.owner_hint,
             "requested_action": extraction.requested_action,
@@ -304,6 +335,7 @@ async def run_pipeline(
             issue_text=text,
             location_address=address,
             source_language=detected_language,
+            transcript_metadata=transcripts,
             category=extraction.category_id,
             department_key=category.department_key,
             priority=policy.priority,
@@ -687,7 +719,9 @@ async def dispatch_grievance(
         department = department_for_category(grievance.category or "other")
         dispatcher = get_dispatcher(settings, http_client)
         summary = render_confirmation_summary(grievance)
-        pdf_bytes = Path(grievance.pdf_path).read_bytes() if grievance.pdf_path else b""
+        pdf_bytes = (
+            artifact_path(settings, grievance.pdf_path).read_bytes() if grievance.pdf_path else b""
+        )
 
         try:
             ref = await dispatcher.dispatch(

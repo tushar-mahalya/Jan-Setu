@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
+import { useI18n } from "../i18n/I18nContext";
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl;
 L.Icon.Default.mergeOptions({ iconRetinaUrl: markerIcon2x, iconUrl: markerIcon, shadowUrl: markerShadow });
@@ -18,6 +19,8 @@ export interface LocationValue {
 interface LocationPickerProps {
   value: LocationValue | null;
   onChange: (value: LocationValue) => void;
+  /** Set by the parent (e.g. "Use my location") to pan/zoom the map to a point. */
+  recenter?: [number, number] | null;
 }
 
 function Recenter({ center }: { center: [number, number] }) {
@@ -49,87 +52,14 @@ function Pin({
   return <Marker draggable position={position} eventHandlers={eventHandlers} ref={markerRef} />;
 }
 
-export default function LocationPicker({ value, onChange }: LocationPickerProps) {
-  const [position, setPosition] = useState<[number, number]>(
-    value ? [value.lat, value.lon] : FALLBACK_CENTER,
-  );
-  const [recenter, setRecenter] = useState<[number, number] | null>(null);
-  const [geoState, setGeoState] = useState<"idle" | "locating" | "found" | "failed">("idle");
-  const [geoError, setGeoError] = useState<string | null>(null);
-  const [coordinateError, setCoordinateError] = useState<string | null>(null);
-  const onChangeRef = useRef(onChange);
-
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
-
-  const handleMove = useCallback(
-    (lat: number, lon: number) => {
-      setPosition([lat, lon]);
-      setGeoState("found");
-      setGeoError(null);
-      setCoordinateError(null);
-      onChange({ lat, lon });
-    },
-    [onChange],
-  );
-
-  const locateMe = useCallback(() => {
-    setGeoError(null);
-    if (!navigator.geolocation) {
-      setGeoState("failed");
-      setGeoError("Location is not supported here. Tap the map to place the pin. / मानचित्र पर पिन लगाएँ।");
-      return;
-    }
-
-    setGeoState("locating");
-    navigator.geolocation.getCurrentPosition(
-      (result) => {
-        const next: [number, number] = [result.coords.latitude, result.coords.longitude];
-        setPosition(next);
-        setRecenter(next);
-        setGeoState("found");
-        onChangeRef.current({ lat: next[0], lon: next[1] });
-      },
-      (error) => {
-        setGeoState("failed");
-        const reason =
-          error.code === error.PERMISSION_DENIED
-            ? "Location permission is off."
-            : "We could not find your location.";
-        setGeoError(`${reason} Tap the map to place the pin, or try again. / मानचित्र पर पिन लगाएँ या फिर कोशिश करें।`);
-      },
-      { enableHighAccuracy: true, timeout: 8000 },
-    );
-  }, []);
+export default function LocationPicker({ value, onChange, recenter }: LocationPickerProps) {
+  const { t } = useI18n();
+  const position: [number, number] = value ? [value.lat, value.lon] : FALLBACK_CENTER;
+  const handleMove = useCallback((lat: number, lon: number) => onChange({ lat, lon }), [onChange]);
 
   return (
     <div className="location-picker">
-      <div className="location-picker__toolbar">
-        <button
-          type="button"
-          className="btn btn--secondary btn-sm"
-          onClick={locateMe}
-          disabled={geoState === "locating"}
-        >
-          {geoState === "locating"
-            ? "Finding location… / स्थान खोज रहे हैं…"
-            : "Use my location / मेरा स्थान"}
-        </button>
-        {value && (
-          <span className="location-picker__selected" role="status">
-            Pin selected / पिन चुना गया
-          </span>
-        )}
-      </div>
-
-      {geoError && (
-        <div className="notice" data-tone="warning" role="alert">
-          <p>{geoError}</p>
-        </div>
-      )}
-
-      <div className="location-picker__map" role="application" aria-label="Interactive map for choosing complaint location. Use the coordinate fields below to enter a location by keyboard.">
+      <div className="location-picker__map" role="application" aria-label={t.mapAria}>
         <MapContainer
           center={position}
           zoom={15}
@@ -144,26 +74,8 @@ export default function LocationPicker({ value, onChange }: LocationPickerProps)
           <Pin position={position} onMove={handleMove} />
         </MapContainer>
       </div>
-      <fieldset className="coord-readout" aria-describedby={coordinateError ? "location-coordinate-error" : undefined}>
-        <legend>{value ? "Selected coordinates" : "Map centre"}</legend>
-        <div className="location-picker__coordinate-fields">
-          <label htmlFor="location-latitude">Latitude</label>
-          <input id="location-latitude" inputMode="decimal" type="number" step="any" min="-90" max="90" value={position[0]} onChange={(event) => {
-            const lat = Number(event.target.value);
-            if (Number.isFinite(lat) && lat >= -90 && lat <= 90) handleMove(lat, position[1]);
-            else setCoordinateError("Enter a latitude between -90 and 90.");
-          }} />
-          <label htmlFor="location-longitude">Longitude</label>
-          <input id="location-longitude" inputMode="decimal" type="number" step="any" min="-180" max="180" value={position[1]} onChange={(event) => {
-            const lon = Number(event.target.value);
-            if (Number.isFinite(lon) && lon >= -180 && lon <= 180) handleMove(position[0], lon);
-            else setCoordinateError("Enter a longitude between -180 and 180.");
-          }} />
-        </div>
-        {coordinateError && <p id="location-coordinate-error" className="field-error" role="alert">{coordinateError}</p>}
-      </fieldset>
       <p className="field__hint">
-        {value ? "Location selected. Drag the pin if you need to make it more precise." : "No location selected yet. Use your location or tap the map to place the pin."}
+        {value ? t.hintSelected : t.hintNone}
       </p>
     </div>
   );

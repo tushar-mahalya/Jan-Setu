@@ -55,10 +55,10 @@ async function openReview(page: Page) {
     const updates = route.request().postDataJSON();
     await route.fulfill({ json: { ...citizenDraft, category_id: updates.category_id ?? citizenDraft.category_id, category_label: updates.category_id === "streetlight_out" ? "Streetlight not working" : citizenDraft.category_label, asset_scope: updates.asset_scope ?? citizenDraft.asset_scope, structured_facts: { ...citizenDraft.structured_facts, summary: updates.summary ?? citizenDraft.structured_facts.summary } } });
   });
+  await page.context().grantPermissions(["geolocation"]);
+  await page.context().setGeolocation({ latitude: 18.5204, longitude: 73.8567 });
   await page.goto("/complaints/new");
-  await page.getByLabel("Latitude").fill("18.5204");
-  await page.getByLabel("Longitude").fill("73.8567");
-  await page.getByLabel("Longitude").press("Enter");
+  await page.getByRole("button", { name: /Use my location/i }).click();
   await page.getByRole("button", { name: /Continue/i }).click();
   await page.getByLabel("Describe the civic issue").fill("Large pothole near the bus stop has damaged two-wheelers.");
   await page.getByRole("button", { name: /Continue/i }).click();
@@ -71,6 +71,8 @@ test("public landing is polished and error free", async ({ page }, testInfo) => 
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expect(page.getByRole("link", { name: /Open|Start|app/i }).first()).toBeVisible();
+  await page.goto("/login");
+  await expect(page.getByRole("link", { name: "Official access →" })).toHaveAttribute("href", "/official/login");
   await page.screenshot({ path: testInfo.outputPath("landing.png"), fullPage: true });
   expect(errors).toEqual([]);
 });

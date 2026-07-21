@@ -12,7 +12,6 @@ ever reaching the FSM.
 
 import logging
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -35,7 +34,7 @@ from jan_setu.db import AsyncSessionLocal, utc_now
 from jan_setu.whatsapp.dispatch import send_pending
 from jan_setu.pipeline.geocoding import reverse_geocode_cached
 from jan_setu.logctx import request_id_var
-from jan_setu.pipeline.media import upload_whatsapp_media
+from jan_setu.pipeline.media import artifact_path, upload_whatsapp_media
 from jan_setu.pipeline import (
     FinalizeOutcome,
     PipelineResult,
@@ -554,7 +553,7 @@ async def _send_pipeline_followup_message(
             pdf_media_id: str | None = None
             if grievance.pdf_path:
                 try:
-                    pdf_bytes = Path(grievance.pdf_path).read_bytes()
+                    pdf_bytes = artifact_path(settings, grievance.pdf_path).read_bytes()
                     pdf_media_id = await upload_whatsapp_media(
                         http_client,
                         settings,

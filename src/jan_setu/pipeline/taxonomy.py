@@ -684,21 +684,21 @@ def evaluate_routing_policy(
             reason="Configured service belongs to an external authority.",
         )
     route = route_for_category(canonical, profile)
-    if route is None or extraction_confidence < 0.65 or asset_scope == "unknown":
+    if route is None:
         return RoutingDecision(
             disposition="needs_human_review",
             priority=category_or_default(canonical).default_priority,
             dedup_eligible=False,
             needs_official_review=True,
-            reason="Category confidence or public-asset ownership is insufficient for automatic routing.",
+            reason="No configured municipal route is available for this service.",
         )
     if safety == "possible":
         return RoutingDecision(
             disposition="municipal_ticket_and_escalate",
             priority="priority",
             dedup_eligible=False,
-            needs_official_review=True,
-            reason="Possible safety risk requires expedited official review.",
+            needs_official_review=False,
+            reason="Possible safety risk is filed with expedited handling.",
         )
     return RoutingDecision(
         disposition="municipal_ticket",

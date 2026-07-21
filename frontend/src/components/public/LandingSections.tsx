@@ -1,12 +1,13 @@
 import { Link } from "react-router-dom";
 import { useI18n } from "../../i18n/I18nContext";
 
-const categories = ["roads", "lighting", "sanitation", "drainage", "water", "garbage", "animals", "parks", "encroachment", "electricity", "other"];
+const categories = ["roads", "lighting", "sanitation", "drainage", "water", "garbage", "animals", "parks", "encroachment", "electricity", "other"] as const;
 const categoryIcons = ["⌁", "◉", "✦", "≈", "◌", "▣", "♡", "♧", "▤", "ϟ", "?"];
 
 function CivicHeroIllustration() {
-  return <div className="civic-hero-art" aria-label="Example of a citizen sending a location and voice note, then receiving a tracked complaint ticket">
-    <svg viewBox="0 0 520 430" role="img" aria-label="Citizen sends a location and voice note and receives a tracked complaint ticket">
+  const { t } = useI18n();
+  return <div className="civic-hero-art" aria-label={t.heroArtAria}>
+    <svg viewBox="0 0 520 430" role="img" aria-label={t.heroArtAria}>
       <path className="civic-hero-art__road" d="M24 353c110-56 239-48 472 11" />
       <path className="civic-hero-art__city" d="M42 309V188h85v121M63 214h18v18H63zM94 214h18v18H94zM63 250h18v18H63zM94 250h18v18H94zM400 310V151h76v159M416 178h15v16h-15zM445 178h15v16h-15zM416 214h15v16h-15zM445 214h15v16h-15z" />
       <circle className="civic-hero-art__sun" cx="429" cy="79" r="36" />
@@ -18,19 +19,19 @@ function CivicHeroIllustration() {
       <path className="civic-hero-art__connection" d="M330 229c46-15 71-3 90 24" />
       <g className="civic-hero-art__ticket"><rect x="354" y="249" width="137" height="82" rx="16" /><path d="M373 272h59M373 289h43" /><circle cx="466" cy="288" r="12" /><path d="m460 288 5 5 8-10" /></g>
     </svg>
-    <span className="civic-hero-art__label">WhatsApp → routed ticket → visible updates</span>
+    <span className="civic-hero-art__label">{t.heroArtLabel}</span>
   </div>;
 }
 
 export function Hero() {
   const { t } = useI18n();
-  return <><section className="parity-hero"><div className="parity-container parity-hero-grid"><div><h1>{t.heroTitle}</h1><p className="parity-lead">{t.heroSub}</p><div className="parity-actions"><Link className="parity-btn parity-orange" to="/login">{t.ctaPrimary} →</Link><a className="parity-btn parity-outline" href="#how">{t.ctaSecondary}</a></div><div className="parity-chips"><span>{t.chip1}</span><span>{t.chip2}</span><span>{t.chip3}</span></div></div><CivicHeroIllustration /></div></section><div className="parity-proof"><span>Location, voice, text & photo</span><span>WhatsApp verification</span><span>Tracked complaint history</span><span>{t.chip4}</span></div></>;
+  return <><section className="parity-hero"><div className="parity-container parity-hero-grid"><div><h1>{t.heroTitle}</h1><p className="parity-lead">{t.heroSub}</p><div className="parity-actions"><Link className="parity-btn parity-orange" to="/login">{t.ctaPrimary} →</Link><a className="parity-btn parity-outline" href="#how">{t.ctaSecondary}</a></div><div className="parity-chips"><span>{t.chip1}</span><span>{t.chip2}</span><span>{t.chip3}</span></div></div><CivicHeroIllustration /></div></section><div className="parity-proof"><span>{t.proofLocation}</span><span>{t.proofVerify}</span><span>{t.proofHistory}</span><span>{t.chip4}</span></div></>;
 }
 
 export function Process() {
   const { t } = useI18n();
   const steps = [[t.step1H, t.step1B], [t.step2H, t.step2B], [t.step3H, t.step3B], [t.step4H, t.step4B]];
-  return <section id="how" className="parity-section"><div className="parity-container"><div className="parity-heading"><h2>{t.howTitle}</h2><p>Four visible steps. No unexplained municipal process.</p></div><ol className="parity-workflow">{steps.map(([heading, body], index) => <li key={heading}><i>{index + 1}</i><h3>{heading}</h3><p>{body}</p></li>)}</ol></div></section>;
+  return <section id="how" className="parity-section"><div className="parity-container"><div className="parity-heading"><h2>{t.howTitle}</h2><p>{t.processSubtitle}</p></div><ol className="parity-workflow">{steps.map(([heading, body], index) => <li key={heading}><i>{index + 1}</i><h3>{heading}</h3><p>{body}</p></li>)}</ol></div></section>;
 }
 
 export function Categories() {
@@ -40,7 +41,7 @@ export function Categories() {
 
 export function Features() {
   const { t } = useI18n();
-  return <section className="parity-section"><div className="parity-container"><div className="parity-heading"><h2>{t.featuresTitle}</h2></div><div className="parity-features">{[[t.feature1H, t.feature1B, "✓"], [t.feature2H, t.feature2B, "EN/हिं"], [t.feature3H, t.feature3B, "↗"]].map(([heading, body, icon]) => <article key={heading}><span>{icon}</span><h3>{heading}</h3><p>{body}</p></article>)}</div></div></section>;
+  return <section className="parity-section"><div className="parity-container"><div className="parity-heading"><h2>{t.featuresTitle}</h2></div><div className="parity-features">{[[t.feature1H, t.feature1B, "✓"], [t.feature2H, t.feature2B, "⇄"], [t.feature3H, t.feature3B, "↗"]].map(([heading, body, icon]) => <article key={heading}><span>{icon}</span><h3>{heading}</h3><p>{body}</p></article>)}</div></div></section>;
 }
 
 export function CallToAction() {

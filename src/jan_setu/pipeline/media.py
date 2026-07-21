@@ -56,6 +56,26 @@ def validate_upload(
         raise UploadTooLarge(f"{kind} upload of {size_bytes} bytes exceeds the {max_bytes} limit")
 
 
+def artifact_path(settings: Settings, stored_path: str | Path) -> Path:
+    """Resolve a stored upload path under this process's configured upload root.
+
+    The host API and Docker workers use different absolute roots in development.
+    Persisted paths from either process are mapped by their path below ``uploads``
+    so each process opens its own view of the shared artifact directory.
+    """
+    path = Path(stored_path)
+    root = Path(settings.upload_dir)
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        parts = path.parts
+        try:
+            relative = Path(*parts[parts.index("uploads") + 1 :])
+        except ValueError:
+            relative = path
+    return root / relative
+
+
 def save_upload(settings: Settings, *, grievance_id: str, name: str, data: bytes) -> str:
     """Write bytes under ``upload_dir/<grievance_id>/<name>`` and return the path."""
     directory = Path(settings.upload_dir) / str(grievance_id)

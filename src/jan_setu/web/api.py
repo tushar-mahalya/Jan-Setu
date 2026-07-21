@@ -6,6 +6,7 @@ adapters over the same orchestrator, so "what happens to a filed complaint" is
 implemented exactly once.
 """
 
+import json
 import logging
 from typing import Annotated
 from uuid import UUID
@@ -29,10 +30,12 @@ from jan_setu.config import Settings, get_settings
 from jan_setu.db import get_session
 from jan_setu.db.models import Grievance, User
 from jan_setu.pipeline import finalize_grievance, recheck_image
+from jan_setu.pipeline.stt import transcribe_clip
 from jan_setu.pipeline.media import (
     UploadTooLarge,
     UploadTypeNotAllowed,
     new_filename,
+    artifact_path,
     normalize_mime_type,
     save_upload,
     validate_upload,
@@ -60,6 +63,7 @@ from jan_setu.schemas import (
     GrievanceEventRead,
     GrievanceReviewPatch,
     GrievanceSummary,
+    TranscriptionPreview,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +74,26 @@ def _require_owner(grievance: Grievance | None, user: User) -> Grievance:
     if grievance is None or grievance.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grievance not found")
     return grievance
+
+
+def _voice_note_urls(grievance: Grievance) -> list[str]:
+    return [
+        f"/api/grievances/{grievance.id}/audio/{index}"
+        for index, message in enumerate(grievance.issue_messages)
+        if message.get("type") in ("audio", "voice") and message.get("local_path")
+    ]
+
+
+def _voice_note_metadata(grievance: Grievance) -> list[dict[str, str | int]]:
+    return [
+        {
+            "recording_id": str(message.get("recording_id") or f"legacy-{index + 1}"),
+            "segment_index": int(message.get("segment_index") or 0),
+            "mime_type": str(message.get("mime_type") or "audio/webm"),
+        }
+        for index, message in enumerate(grievance.issue_messages)
+        if message.get("type") in ("audio", "voice") and message.get("local_path")
+    ]
 
 
 async def _draft_response(session: AsyncSession, grievance_id: UUID) -> GrievanceDraftResponse:
@@ -100,7 +124,34 @@ async def _draft_response(session: AsyncSession, grievance_id: UUID) -> Grievanc
         review_status=grievance.review_status,
         structured_facts=grievance.structured_facts,
         routing=grievance.routing_snapshot,
+        transcript_metadata=list(grievance.transcript_metadata or []),
+        voice_note_urls=_voice_note_urls(grievance),
+        voice_note_metadata=_voice_note_metadata(grievance),
     )
+
+
+@router.post("/transcription-preview", response_model=TranscriptionPreview)
+async def preview_transcription(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    user: Annotated[User, Depends(get_current_user)],
+    audio: Annotated[UploadFile, File()],
+) -> TranscriptionPreview:
+    del user  # Authentication is required even though preview is not persisted.
+    data = await audio.read()
+    mime_type = normalize_mime_type(audio.content_type) or "audio/ogg"
+    try:
+        validate_upload(mime_type=mime_type, size_bytes=len(data), kind="audio", settings=settings)
+    except (UploadTooLarge, UploadTypeNotAllowed) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    result = await transcribe_clip(
+        session, settings, request.app.state.http_client, audio_bytes=data, mime_type=mime_type
+    )
+    await session.commit()
+    if not result.ok or not result.text:
+        return TranscriptionPreview(status="unavailable")
+    return TranscriptionPreview(text=result.text, language=result.detected_language, status="final")
 
 
 @router.post("/draft", response_model=GrievanceDraftResponse)
@@ -111,8 +162,10 @@ async def create_draft(
     lat: Annotated[float, Form()],
     lon: Annotated[float, Form()],
     text: Annotated[str | None, Form()] = None,
+    landmark: Annotated[str | None, Form()] = None,
     photo: Annotated[UploadFile | None, File()] = None,
     audio: Annotated[list[UploadFile] | None, File()] = None,
+    audio_metadata: Annotated[list[str] | None, Form()] = None,
 ) -> GrievanceDraftResponse:
     if user.contact_id is None:
         raise HTTPException(
@@ -136,8 +189,32 @@ async def create_draft(
         except (UploadTooLarge, UploadTypeNotAllowed) as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    audio_clips: list[tuple[bytes, str]] = []
-    for clip in audio or []:
+    raw_audio_metadata = audio_metadata or []
+    if len(raw_audio_metadata) != len(audio or []):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Each voice note requires its recording metadata.",
+        )
+    parsed_audio_metadata: list[dict[str, str | int]] = []
+    for raw_metadata in raw_audio_metadata:
+        try:
+            metadata = json.loads(raw_metadata)
+            recording_id = str(metadata["recording_id"])
+            segment_index = int(metadata["segment_index"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voice note metadata is invalid.",
+            ) from exc
+        if len(recording_id) > 128 or not recording_id or segment_index < 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Voice note metadata is invalid.",
+            )
+        parsed_audio_metadata.append({"recording_id": recording_id, "segment_index": segment_index})
+
+    audio_clips: list[tuple[bytes, str, dict[str, str | int]]] = []
+    for clip, metadata in zip(audio or [], parsed_audio_metadata, strict=True):
         if not clip.filename:
             continue
         data = await clip.read()
@@ -148,13 +225,18 @@ async def create_draft(
             )
         except (UploadTooLarge, UploadTypeNotAllowed) as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-        audio_clips.append((data, mime_type))
+        audio_clips.append((data, mime_type, metadata))
 
     if not text_messages and not audio_clips:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Provide a description (text or voice note).",
         )
+
+    # Citizen-provided landmark from step 1: fed to the pipeline as a text hint so
+    # extraction populates structured_facts.landmark without a review clarification.
+    if landmark and landmark.strip():
+        text_messages.append({"type": "text", "text": f"Nearby landmark: {landmark.strip()}"})
 
     context = {
         "location": {"lat": lat, "lon": lon, "display_address": None},
@@ -172,11 +254,18 @@ async def create_draft(
     await session.commit()
 
     issue_messages = list(text_messages)
-    for data, mime_type in audio_clips:
+    for data, mime_type, metadata in audio_clips:
         path = save_upload(
             settings, grievance_id=str(grievance.id), name=new_filename(mime_type), data=data
         )
-        issue_messages.append({"type": "audio", "mime_type": mime_type, "local_path": path})
+        issue_messages.append(
+            {
+                "type": "audio",
+                "mime_type": mime_type,
+                "local_path": path,
+                **metadata,
+            }
+        )
 
     photo_path = None
     if photo_bytes is not None:
@@ -367,6 +456,8 @@ async def get_grievance_detail(
     grievance = await get_grievance(session, grievance_id=grievance_id)
     grievance = _require_owner(grievance, user)
     events = await list_grievance_events(session, grievance_id=grievance_id)
+    category = category_or_default(grievance.category_id or grievance.category)
+    department = department_for_category(category.key)
     return GrievanceDetail(
         id=grievance.id,
         human_id=grievance.human_id,
@@ -378,6 +469,7 @@ async def get_grievance_detail(
         address=grievance.location_address,
         issue_text=grievance.issue_text,
         department_key=grievance.department_key,
+        department_name=department.name,
         term=grievance.term,
         confidence=grievance.confidence,
         image_match_status=grievance.image_match_status,
@@ -386,19 +478,66 @@ async def get_grievance_detail(
         dispatch_ref=grievance.dispatch_ref,
         events=[GrievanceEventRead.model_validate(event) for event in events],
         pdf_url=f"/api/grievances/{grievance.id}/pdf" if grievance.pdf_path else None,
+        category_id=grievance.category_id,
+        category_label=category.label if grievance.category_id else None,
+        domain_label=DOMAIN_LABELS.get(category.parent_key) if grievance.category_id else None,
+        safety_level=grievance.safety_level,
+        asset_scope=grievance.asset_scope,
+        disposition=grievance.disposition,
+        review_status=grievance.review_status,
+        source_language=grievance.source_language,
+        transcript_metadata=list(grievance.transcript_metadata or []),
+        structured_facts=grievance.structured_facts,
+        routing=grievance.routing_snapshot,
     )
+
+
+@router.get("/{grievance_id}/audio/{message_index}")
+async def stream_voice_note(
+    grievance_id: UUID,
+    message_index: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> FileResponse:
+    grievance = _require_owner(await get_grievance(session, grievance_id=grievance_id), user)
+    if message_index < 0 or message_index >= len(grievance.issue_messages):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice note not found")
+    message = grievance.issue_messages[message_index]
+    if message.get("type") not in ("audio", "voice") or not message.get("local_path"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice note not found")
+    audio_path = artifact_path(settings, message["local_path"])
+    if not audio_path.is_file():
+        logger.warning(
+            "grievance_voice_note_missing",
+            extra={"grievance_id": str(grievance_id), "audio_path": str(audio_path)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Voice note is unavailable"
+        )
+    return FileResponse(audio_path, media_type=message.get("mime_type") or "audio/webm")
 
 
 @router.get("/{grievance_id}/pdf")
 async def download_pdf(
     grievance_id: UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
     user: Annotated[User, Depends(get_current_user)],
 ) -> FileResponse:
     grievance = await get_grievance(session, grievance_id=grievance_id)
     grievance = _require_owner(grievance, user)
     if not grievance.pdf_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="PDF not generated yet")
+    pdf_path = artifact_path(settings, grievance.pdf_path)
+    if not pdf_path.is_file():
+        logger.warning(
+            "grievance_pdf_missing",
+            extra={"grievance_id": str(grievance_id), "pdf_path": str(pdf_path)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="PDF artifact is unavailable"
+        )
     return FileResponse(
-        grievance.pdf_path, media_type="application/pdf", filename=f"{grievance.human_id}.pdf"
+        pdf_path, media_type="application/pdf", filename=f"{grievance.human_id}.pdf"
     )

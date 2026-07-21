@@ -1,133 +1,69 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { en, type Catalog } from "./messages/en";
+import { hi } from "./messages/hi";
+import { bn } from "./messages/bn";
+import { mr } from "./messages/mr";
+import { te } from "./messages/te";
+import { ta } from "./messages/ta";
 
-export type Locale = "en" | "hi";
-type Messages = Record<string, string>;
+export type Locale = "en" | "hi" | "bn" | "mr" | "te" | "ta";
+export type { Catalog };
 
-const categories = [
-  ["roads", "Roads & Potholes", "Public Works Department"],
-  ["lighting", "Street Lighting", "Electrical Department"],
-  ["sanitation", "Sanitation & Public Toilets", "Sanitation Department"],
-  ["drainage", "Drainage & Sewerage", "Public Works Department"],
-  ["water", "Water Supply", "Water Works Department"],
-  ["garbage", "Garbage Collection", "Sanitation Department"],
-  ["animals", "Stray Animal Cruelty & Care", "Animal Welfare Department"],
-  ["parks", "Parks & Public Spaces", "Parks & Gardens Department"],
-  ["encroachment", "Encroachment", "Town Planning Department"],
-  ["electricity", "Electricity", "Electrical Department"],
-  ["other", "Other", "General Grievance Cell"],
-] as const;
-
-const en: Messages = {
-  brand: "Jan Setu",
-  tagline: "Citizen grievance portal",
-  home: "Home",
-  about: "About",
-  signIn: "Sign in",
-  navHow: "How it works",
-  navCategories: "Categories",
-  navOpenApp: "Open the app",
-  heroTitle: "Report an issue. Watch the city respond.",
-  heroSub: "File a complaint here on the web, or send it straight from WhatsApp — same location pin, voice note and photo, same tracked ticket. Jan Setu classifies it and routes it to the right department automatically.",
-  ctaPrimary: "Get started",
-  ctaSecondary: "See how it works",
-  chip1: "70+ complaint categories",
-  chip2: "11 municipal departments",
-  chip3: "Works on web or WhatsApp",
-  chip4: "English & Hindi",
-  howTitle: "From WhatsApp message to a tracked ticket",
-  step1H: "Report on WhatsApp",
-  step1B: "Share your location, type or record your concern, and add a photo if it helps.",
-  step2H: "AI classifies it",
-  step2B: "Speech-to-text and language models match the issue to the right category and department.",
-  step3H: "Duplicates are grouped",
-  step3B: "Nearby reports about the same issue are grouped, while priority cases skip grouping.",
-  step4H: "Sent to the department",
-  step4B: "A complete ticket reaches the responsible department and you receive status updates.",
-  chatLabel: "Example WhatsApp conversation",
-  justNow: "Just now",
-  chatGreet: "Also open on WhatsApp — same report, same ticket.",
-  chatLocation: "Location shared",
-  chatVoice: "Voice note · 0:08",
-  chatFiling: "Got it — filing your complaint…",
-  chatRegistered: "Registered",
-  categoriesTitle: "Common complaints, routed to the right department",
-  categoriesIntro: "Every category maps to a real municipal department — no report goes to a generic inbox.",
-  priorityBadge: "Priority — skips grouping",
-  featuresTitle: "Built for citizens, accessible however you prefer",
-  feature1H: "One phone number, no password",
-  feature1B: "Approve sign-in from your own WhatsApp, or confirm a one-time code. Nothing to remember.",
-  feature2H: "Every channel, the same capability",
-  feature2B: "Location, voice notes, photos and text work identically here and on WhatsApp.",
-  feature3H: "Track every step",
-  feature3B: "A live status timeline keeps every ticket visible from processing to dispatch.",
-  ctaTitle: "Ready to report an issue?",
-  ctaSub: "It takes less than a minute — on the web or on WhatsApp.",
-  ctaButton: "Open Jan Setu",
-  footerNote: "A citizen-first grievance pipeline for Indian municipalities.",
-  aboutTitle: "File a complaint over WhatsApp. Track it here.",
-  aboutIntro: "Jan Setu turns a WhatsApp message into a tracked municipal complaint — no app install, no queue at a government office.",
-  privacyTitle: "Verified by WhatsApp, not a password",
-  privacyBody: "Signing in is approved from your own WhatsApp number — nothing to remember, nothing stored but your phone number and reports.",
-  loading: "Loading Jan Setu…",
-  errorTitle: "We hit a small roadblock",
-  errorBody: "This page could not load.",
-  retry: "Try again",
-};
-
-for (const [key, label, department] of categories) {
-  en[`${key}Label`] = label;
-  en[`${key}Dept`] = department;
+export interface LocaleInfo {
+  code: Locale;
+  /** BCP-47 tag used for <html lang>, Intl formatting, and lang attributes. */
+  bcp47: string;
+  /** Language name in its own script, shown in the picker. */
+  native: string;
 }
 
-const hi: Messages = {
-  ...en,
-  brand: "जन सेतु",
-  tagline: "नागरिक शिकायत पोर्टल",
-  home: "होम",
-  about: "जानकारी",
-  signIn: "साइन इन",
-  navHow: "कैसे काम करता है",
-  navCategories: "श्रेणियाँ",
-  navOpenApp: "ऐप खोलें",
-  heroTitle: "समस्या दर्ज करें। शहर को जवाब देते देखें।",
-  heroSub: "वेब पर शिकायत दर्ज करें या WhatsApp से भेजें — वही लोकेशन पिन, वॉइस नोट, फोटो और ट्रैक किया गया टिकट।",
-  ctaPrimary: "शुरू करें",
-  ctaSecondary: "कैसे काम करता है",
-  howTitle: "WhatsApp संदेश से ट्रैक किए गए टिकट तक",
-  step1H: "WhatsApp पर रिपोर्ट करें",
-  step2H: "AI वर्गीकृत करता है",
-  step3H: "मिलती-जुलती रिपोर्ट जोड़ी जाती हैं",
-  step4H: "विभाग को भेजा जाता है",
-  categoriesTitle: "आम शिकायतें, सही विभाग तक",
-  ctaTitle: "समस्या दर्ज करने के लिए तैयार हैं?",
-  ctaButton: "जन सेतु खोलें",
-  footerNote: "भारतीय नगरपालिकाओं के लिए नागरिक-प्रथम शिकायत प्रणाली।",
-  aboutTitle: "WhatsApp पर शिकायत दर्ज करें। यहाँ ट्रैक करें।",
-  privacyTitle: "WhatsApp से सत्यापन, पासवर्ड से नहीं",
-  loading: "जन सेतु लोड हो रहा है…",
-  errorTitle: "एक छोटी अड़चन आई",
-  errorBody: "यह पेज लोड नहीं हो सका।",
-  retry: "फिर कोशिश करें",
-};
+export const LOCALES: readonly LocaleInfo[] = [
+  { code: "en", bcp47: "en-IN", native: "English" },
+  { code: "hi", bcp47: "hi-IN", native: "हिन्दी" },
+  { code: "bn", bcp47: "bn-IN", native: "বাংলা" },
+  { code: "mr", bcp47: "mr-IN", native: "मराठी" },
+  { code: "te", bcp47: "te-IN", native: "తెలుగు" },
+  { code: "ta", bcp47: "ta-IN", native: "தமிழ்" },
+];
+
+const CATALOGS: Record<Locale, Catalog> = { en, hi, bn, mr, te, ta };
+export const LOCALE_STORAGE_KEY = "jan-setu-locale";
+
+function isLocale(value: string | null): value is Locale {
+  return value !== null && value in CATALOGS;
+}
+
+/** Replace {name} placeholders: fill(t.stepCounter, { current: 2, total: 4 }). */
+export function fill(template: string, vars: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (match, name: string) =>
+    name in vars ? String(vars[name]) : match,
+  );
+}
 
 const I18nContext = createContext<{
   locale: Locale;
+  bcp47: string;
   setLocale: (locale: Locale) => void;
-  t: Messages;
+  t: Catalog;
 } | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<Locale>(() => {
-    const saved = window.localStorage.getItem("jan-setu-locale");
-    return saved === "hi" ? "hi" : "en";
+    const saved = window.localStorage.getItem(LOCALE_STORAGE_KEY);
+    return isLocale(saved) ? saved : "en";
   });
 
-  useEffect(() => {
-    window.localStorage.setItem("jan-setu-locale", locale);
-    document.documentElement.lang = locale;
-  }, [locale]);
+  const bcp47 = LOCALES.find((entry) => entry.code === locale)?.bcp47 ?? "en-IN";
 
-  const value = useMemo(() => ({ locale, setLocale, t: locale === "en" ? en : hi }), [locale]);
+  useEffect(() => {
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+    document.documentElement.lang = bcp47;
+  }, [locale, bcp47]);
+
+  const value = useMemo(
+    () => ({ locale, bcp47, setLocale, t: CATALOGS[locale] }),
+    [locale, bcp47],
+  );
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

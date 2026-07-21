@@ -64,10 +64,17 @@ export interface GrievanceDraftResponse {
   asset_scope?: "public" | "private" | "unknown" | null;
   disposition?: string | null;
   review_status?: string | null;
+  transcript_metadata?: Transcript[];
+  voice_note_urls?: string[];
+  voice_note_metadata?: Array<{ recording_id: string; segment_index: number; mime_type: string }>;
   structured_facts?: {
     summary?: string;
+    original_text?: string;
     owner_hint?: string;
     requested_action?: string | null;
+    landmark?: string | null;
+    incident_time?: string | null;
+    evidence?: string[];
     missing_facts?: string[];
     clarification_question?: string | null;
     contradictions?: string[];
@@ -103,10 +110,25 @@ export interface GrievanceEvent {
   created_at: string;
 }
 
+export interface TranscriptionPreview {
+  text?: string | null;
+  language?: string | null;
+  status: "final" | "unavailable";
+}
+
+export interface Transcript {
+  recording_id?: string;
+  segment_index?: number;
+  text: string;
+  language: string;
+  mime_type?: string;
+}
+
 export interface GrievanceDetail extends GrievanceSummary {
   address: string | null;
   issue_text: string | null;
   department_key: string | null;
+  department_name: string | null;
   term: string | null;
   confidence: number | null;
   image_match_status: ImageMatchStatus | null;
@@ -115,4 +137,16 @@ export interface GrievanceDetail extends GrievanceSummary {
   dispatch_ref: string | null;
   events: GrievanceEvent[];
   pdf_url: string | null;
+  category_id?: string | null;
+  category_label?: string | null;
+  domain_label?: string | null;
+  safety_level?: "none" | "possible" | "immediate" | null;
+  asset_scope?: "public" | "private" | "unknown" | null;
+  disposition?: string | null;
+  review_status?: string | null;
+  source_language?: string | null;
+  transcript_metadata: Transcript[];
+  voice_note_urls: string[];
+  structured_facts?: GrievanceDraftResponse["structured_facts"];
+  routing?: GrievanceDraftResponse["routing"];
 }

@@ -1,12 +1,31 @@
 import pytest
 
 from jan_setu.config import Settings
+from pathlib import Path
+
 from jan_setu.pipeline.media import (
     UploadTypeNotAllowed,
+    artifact_path,
     guess_extension,
     normalize_mime_type,
     validate_upload,
 )
+
+
+def test_artifact_path_translates_host_upload_path_for_worker():
+    settings = Settings(upload_dir="/data/uploads")
+
+    assert artifact_path(settings, "data/uploads/grievance-123/voice.webm") == Path(
+        "/data/uploads/grievance-123/voice.webm"
+    )
+
+
+def test_artifact_path_translates_worker_upload_path_for_host():
+    settings = Settings(upload_dir="data/uploads")
+
+    assert artifact_path(settings, "/data/uploads/grievance-123/summary.pdf") == Path(
+        "data/uploads/grievance-123/summary.pdf"
+    )
 
 
 def test_normalize_mime_type_strips_browser_codec_parameter():

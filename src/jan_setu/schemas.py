@@ -127,6 +127,15 @@ class GrievanceDraftResponse(BaseModel):
     review_status: str | None = None
     structured_facts: dict[str, Any] | None = None
     routing: dict[str, Any] | None = None
+    transcript_metadata: list[dict[str, Any]] = Field(default_factory=list)
+    voice_note_urls: list[str] = Field(default_factory=list)
+    voice_note_metadata: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TranscriptionPreview(BaseModel):
+    text: str | None = None
+    language: str | None = None
+    status: str
 
 
 class GrievanceReviewPatch(BaseModel):
@@ -140,6 +149,7 @@ class GrievanceDetail(GrievanceSummary):
     address: str | None
     issue_text: str | None
     department_key: str | None
+    department_name: str | None
     term: str | None
     confidence: float | None
     image_match_status: str | None
@@ -148,3 +158,14 @@ class GrievanceDetail(GrievanceSummary):
     dispatch_ref: str | None
     events: list[GrievanceEventRead]
     pdf_url: str | None
+    category_id: str | None = None
+    category_label: str | None = None
+    domain_label: str | None = None
+    safety_level: str | None = None
+    asset_scope: str | None = None
+    disposition: str | None = None
+    review_status: str | None = None
+    source_language: str | None = None
+    transcript_metadata: list[dict[str, Any]] = Field(default_factory=list)
+    structured_facts: dict[str, Any] | None = None
+    routing: dict[str, Any] | None = None

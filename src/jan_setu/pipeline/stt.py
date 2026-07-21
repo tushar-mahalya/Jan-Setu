@@ -1,8 +1,7 @@
 """Speech-to-text via Sarvam AI's ``saaras`` model.
 
-``mode=translate`` is used deliberately: the owner wants English-only records
-(PDF, classification, department dispatch) regardless of the citizen's spoken
-language; the detected language is kept only as metadata.
+``mode=transcribe`` preserves the citizen's spoken language for the complaint
+record. The multilingual extraction model receives that original transcript.
 """
 
 import asyncio
@@ -54,7 +53,7 @@ async def transcribe_clip(
     extension = mimetypes.guess_extension(mime_type) or ".ogg"
     filename = f"clip{extension}"
     files = {"file": (filename, audio_bytes, mime_type)}
-    data = {"model": settings.sarvam_model, "mode": "translate"}
+    data = {"model": settings.sarvam_model, "mode": "transcribe"}
     headers = {"api-subscription-key": settings.sarvam_api_key.get_secret_value()}
     url = f"{settings.sarvam_base_url.rstrip('/')}/speech-to-text"
 

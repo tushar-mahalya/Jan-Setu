@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { useI18n } from "../i18n/I18nContext";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -6,6 +7,20 @@ interface ErrorBoundaryProps {
 
 interface ErrorBoundaryState {
   failed: boolean;
+}
+
+function ErrorFallback() {
+  const { t } = useI18n();
+  return (
+    <main className="state-page" role="alert">
+      <span className="state-page__mark" aria-hidden="true">!</span>
+      <h1>{t.errorTitle}</h1>
+      <p>{t.errorBody}</p>
+      <button className="btn btn--primary" type="button" onClick={() => window.location.reload()}>
+        {t.retry}
+      </button>
+    </main>
+  );
 }
 
 export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -21,16 +36,6 @@ export default class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBo
 
   render() {
     if (!this.state.failed) return this.props.children;
-
-    return (
-      <main className="state-page" role="alert">
-        <span className="state-page__mark" aria-hidden="true">!</span>
-        <h1>Something went wrong / कुछ गलत हुआ</h1>
-        <p>Reload the page to continue. Your submitted complaints remain safe.</p>
-        <button className="btn btn--primary" type="button" onClick={() => window.location.reload()}>
-          Reload page / पेज फिर खोलें
-        </button>
-      </main>
-    );
+    return <ErrorFallback />;
   }
 }
