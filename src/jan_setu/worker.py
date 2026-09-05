@@ -9,6 +9,7 @@ crashed pipeline stage, an unsent reply after a crash). Run with:
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -44,31 +45,54 @@ async def run_worker() -> None:
     ) as http_client:
         client = WhatsAppCloudClient(settings, http_client)
         while True:
-            async with AsyncSessionLocal() as session:
-                jobs = await claim_pipeline_jobs(session, limit=settings.worker_batch_size)
-                await session.commit()
-            for job in jobs:
-                try:
-                    if job.stage == "reextract":
-                        await reextract_grievance(job.grievance_id, settings, http_client)
+            try:
+                async with AsyncSessionLocal() as session:
+                    jobs = await claim_pipeline_jobs(session, limit=settings.worker_batch_size)
+                    await session.commit()
+            except Exception:
+                logger.exception("worker_claim_failed")
+                await asyncio.sleep(settings.worker_poll_seconds)
+                continue
+
+            if jobs:
+                batch_start = time.perf_counter()
+                succeeded = 0
+                failed = 0
+                for job in jobs:
+                    try:
+                        if job.stage == "reextract":
+                            await reextract_grievance(job.grievance_id, settings, http_client)
+                        else:
+                            await run_pipeline(job.grievance_id, settings, http_client)
+                    except Exception as exc:
+                        async with AsyncSessionLocal() as session:
+                            persisted = await session.get(type(job), job.id)
+                            if persisted is not None:
+                                await fail_pipeline_job(session, job=persisted, error=exc)
+                                await session.commit()
+                        logger.exception(
+                            "worker_pipeline_job_failed",
+                            extra={"grievance_id": str(job.grievance_id), "job_id": str(job.id)},
+                        )
+                        failed += 1
                     else:
-                        await run_pipeline(job.grievance_id, settings, http_client)
-                except Exception as exc:
-                    async with AsyncSessionLocal() as session:
-                        persisted = await session.get(type(job), job.id)
-                        if persisted is not None:
-                            await fail_pipeline_job(session, job=persisted, error=exc)
-                            await session.commit()
-                    logger.exception(
-                        "worker_pipeline_job_failed",
-                        extra={"grievance_id": str(job.grievance_id), "job_id": str(job.id)},
-                    )
-                else:
-                    async with AsyncSessionLocal() as session:
-                        persisted = await session.get(type(job), job.id)
-                        if persisted is not None:
-                            await complete_pipeline_job(session, job=persisted)
-                            await session.commit()
+                        async with AsyncSessionLocal() as session:
+                            persisted = await session.get(type(job), job.id)
+                            if persisted is not None:
+                                await complete_pipeline_job(session, job=persisted)
+                                await session.commit()
+                        succeeded += 1
+                batch_duration = round((time.perf_counter() - batch_start) * 1000, 2)
+                logger.info(
+                    "worker_pipeline_batch_completed",
+                    extra={
+                        "sweep": "pipeline",
+                        "claimed": len(jobs),
+                        "succeeded": succeeded,
+                        "failed": failed,
+                        "duration_ms": batch_duration,
+                    },
+                )
 
             try:
                 await process_pending_events(

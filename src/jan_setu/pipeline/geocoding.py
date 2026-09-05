@@ -11,6 +11,7 @@ only on lat/lon, and the throttle wait happens outside any lock and any HTTP cal
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -125,9 +126,28 @@ async def reverse_geocode_cached(
 
     wait = await reserve_slot(session, provider, settings.geocoder_min_interval_seconds)
     if wait > 0:
+        waited_ms = round(wait * 1000, 2)
+        logger.debug("geocode_throttled", extra={"provider": provider, "waited_ms": waited_ms})
         await asyncio.sleep(wait)
 
+    start = time.perf_counter()
     result = await get_geocoder(settings, http_client).reverse(lat, lon)
+
+    if result.status == "ok":
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        admin_area = None
+        if isinstance(result.address_components, dict):
+            admin_area = result.address_components.get("admin") or result.address_components.get(
+                "state"
+            )
+        logger.info(
+            "geocode_succeeded",
+            extra={
+                "provider": provider,
+                "duration_ms": duration_ms,
+                "admin_area": admin_area,
+            },
+        )
 
     # Only cache deterministic outcomes ("ok"/"empty"); a transient "failed"
     # should be retried next time, not cached.

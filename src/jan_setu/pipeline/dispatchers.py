@@ -11,6 +11,7 @@ per-department systems this project will integrate with later.
 import asyncio
 import logging
 import smtplib
+import time
 import uuid
 from email.message import EmailMessage
 from typing import Protocol
@@ -49,13 +50,34 @@ class MockApiDispatcher:
         self, *, human_id: str, department: Department, summary: str, pdf_bytes: bytes
     ) -> str:
         url = f"{self.settings.mock_api_base_url.rstrip('/')}/mock/municipal/{department.key}/complaints"
+        start_ms = time.perf_counter()
         try:
             response = await self.http_client.post(
                 url, json={"human_id": human_id, "summary": summary}, timeout=10.0
             )
             response.raise_for_status()
+            logger.info(
+                "mock_api_dispatch_sent",
+                extra={
+                    "dispatcher": "mock_api",
+                    "department": department.key,
+                    "status_code": response.status_code,
+                    "duration_ms": round((time.perf_counter() - start_ms) * 1000, 2),
+                },
+            )
             return response.json()["ref"]
-        except (httpx.HTTPError, KeyError) as exc:
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            # ValueError covers a 2xx with an unparseable body (JSONDecodeError)
+            # — route it through DispatchError like any other dispatcher
+            # failure so attempt-counting and eventual give-up still apply.
+            logger.exception(
+                "mock_api_dispatch_failed",
+                extra={
+                    "dispatcher": "mock_api",
+                    "department": department.key,
+                    "duration_ms": round((time.perf_counter() - start_ms) * 1000, 2),
+                },
+            )
             raise DispatchError(str(exc)) from exc
 
 
@@ -78,14 +100,36 @@ class SmtpDispatcher:
             pdf_bytes, maintype="application", subtype="pdf", filename=f"{human_id}.pdf"
         )
         ref = f"MAIL-{uuid.uuid4().hex[:8]}"
+        start_ms = time.perf_counter()
         try:
             await asyncio.to_thread(self._send, message)
+            logger.info(
+                "smtp_dispatch_sent",
+                extra={
+                    "dispatcher": "smtp",
+                    "department": department.key,
+                    "duration_ms": round((time.perf_counter() - start_ms) * 1000, 2),
+                },
+            )
         except OSError as exc:
+            logger.exception(
+                "smtp_dispatch_failed",
+                extra={
+                    "dispatcher": "smtp",
+                    "department": department.key,
+                    "duration_ms": round((time.perf_counter() - start_ms) * 1000, 2),
+                },
+            )
             raise DispatchError(str(exc)) from exc
         return ref
 
     def _send(self, message: EmailMessage) -> None:
         with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port, timeout=10) as smtp:
+            if self.settings.smtp_username:
+                smtp.starttls()
+                smtp.login(
+                    self.settings.smtp_username, self.settings.smtp_password.get_secret_value()
+                )
             smtp.send_message(message)
 
 

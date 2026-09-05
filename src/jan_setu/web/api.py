@@ -6,6 +6,7 @@ adapters over the same orchestrator, so "what happens to a filed complaint" is
 implemented exactly once.
 """
 
+import mimetypes
 import json
 import logging
 from typing import Annotated
@@ -23,13 +24,14 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.auth import get_current_user
 from jan_setu.config import Settings, get_settings
 from jan_setu.db import get_session
 from jan_setu.db.models import Grievance, User
-from jan_setu.pipeline import finalize_grievance, recheck_image
+from jan_setu.pipeline import accept_photo_mismatch, finalize_grievance, recheck_image
 from jan_setu.pipeline.stt import transcribe_clip
 from jan_setu.pipeline.media import (
     UploadTooLarge,
@@ -58,6 +60,7 @@ from jan_setu.repositories import (
     set_grievance_fields,
 )
 from jan_setu.schemas import (
+    GrievanceConfirmResponse,
     GrievanceDetail,
     GrievanceDraftResponse,
     GrievanceEventRead,
@@ -114,6 +117,7 @@ async def _draft_response(session: AsyncSession, grievance_id: UUID) -> Grievanc
         image_match_status=grievance.image_match_status,
         flags=list(grievance.flags or []),
         pdf_url=f"/api/grievances/{grievance.id}/pdf" if grievance.pdf_path else None,
+        photo_url=f"/api/grievances/{grievance.id}/photo" if grievance.photo_path else None,
         taxonomy_version=grievance.taxonomy_version,
         category_id=grievance.category_id,
         category_label=category.label if grievance.category_id else None,
@@ -139,7 +143,9 @@ async def preview_transcription(
     audio: Annotated[UploadFile, File()],
 ) -> TranscriptionPreview:
     del user  # Authentication is required even though preview is not persisted.
-    data = await audio.read()
+    # Cap the read at the limit validate_upload enforces anyway, so an
+    # oversized upload is rejected without first buffering it all into memory.
+    data = await audio.read(settings.max_audio_bytes + 1)
     mime_type = normalize_mime_type(audio.content_type) or "audio/ogg"
     try:
         validate_upload(mime_type=mime_type, size_bytes=len(data), kind="audio", settings=settings)
@@ -154,15 +160,15 @@ async def preview_transcription(
     return TranscriptionPreview(text=result.text, language=result.detected_language, status="final")
 
 
-@router.post("/draft", response_model=GrievanceDraftResponse)
+@router.post("/draft", response_model=GrievanceDraftResponse, status_code=status.HTTP_201_CREATED)
 async def create_draft(
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     user: Annotated[User, Depends(get_current_user)],
-    lat: Annotated[float, Form()],
-    lon: Annotated[float, Form()],
-    text: Annotated[str | None, Form()] = None,
-    landmark: Annotated[str | None, Form()] = None,
+    lat: Annotated[float, Form(ge=-90, le=90)],
+    lon: Annotated[float, Form(ge=-180, le=180)],
+    text: Annotated[str | None, Form(max_length=5000)] = None,
+    landmark: Annotated[str | None, Form(max_length=300)] = None,
     photo: Annotated[UploadFile | None, File()] = None,
     audio: Annotated[list[UploadFile] | None, File()] = None,
     audio_metadata: Annotated[list[str] | None, Form()] = None,
@@ -180,7 +186,7 @@ async def create_draft(
     photo_bytes: bytes | None = None
     photo_mime: str | None = None
     if photo is not None and photo.filename:
-        photo_bytes = await photo.read()
+        photo_bytes = await photo.read(settings.max_image_bytes + 1)
         photo_mime = photo.content_type or "image/jpeg"
         try:
             validate_upload(
@@ -217,7 +223,7 @@ async def create_draft(
     for clip, metadata in zip(audio or [], parsed_audio_metadata, strict=True):
         if not clip.filename:
             continue
-        data = await clip.read()
+        data = await clip.read(settings.max_audio_bytes + 1)
         mime_type = normalize_mime_type(clip.content_type) or "audio/ogg"
         try:
             validate_upload(
@@ -255,8 +261,14 @@ async def create_draft(
 
     issue_messages = list(text_messages)
     for data, mime_type, metadata in audio_clips:
-        path = save_upload(
-            settings, grievance_id=str(grievance.id), name=new_filename(mime_type), data=data
+        # save_upload() does synchronous disk I/O; offload to a worker thread
+        # so it doesn't block the event loop for other concurrent requests.
+        path = await run_in_threadpool(
+            save_upload,
+            settings,
+            grievance_id=str(grievance.id),
+            name=new_filename(mime_type),
+            data=data,
         )
         issue_messages.append(
             {
@@ -269,7 +281,8 @@ async def create_draft(
 
     photo_path = None
     if photo_bytes is not None:
-        photo_path = save_upload(
+        photo_path = await run_in_threadpool(
+            save_upload,
             settings,
             grievance_id=str(grievance.id),
             name=new_filename(photo_mime),
@@ -285,6 +298,9 @@ async def create_draft(
     )
     await enqueue_pipeline_job(session, grievance_id=grievance.id)
     await session.commit()
+    logger.info(
+        "grievance_created", extra={"grievance_id": str(grievance.id), "user_id": str(user.id)}
+    )
     return await _draft_response(session, grievance.id)
 
 
@@ -368,6 +384,14 @@ async def update_review(
             key_suffix=str(grievance.state_version + 1),
         )
     await session.commit()
+    logger.info(
+        "grievance_review_updated",
+        extra={
+            "grievance_id": str(grievance.id),
+            "user_id": str(user.id),
+            "review_status": policy.needs_official_review,
+        },
+    )
     return await _draft_response(session, grievance.id)
 
 
@@ -383,15 +407,19 @@ async def replace_photo(
     grievance = await get_grievance(session, grievance_id=grievance_id)
     _require_owner(grievance, user)
 
-    data = await photo.read()
+    data = await photo.read(settings.max_image_bytes + 1)
     mime_type = photo.content_type or "image/jpeg"
     try:
         validate_upload(mime_type=mime_type, size_bytes=len(data), kind="image", settings=settings)
     except (UploadTooLarge, UploadTypeNotAllowed) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    path = save_upload(
-        settings, grievance_id=str(grievance_id), name=new_filename(mime_type), data=data
+    path = await run_in_threadpool(
+        save_upload,
+        settings,
+        grievance_id=str(grievance_id),
+        name=new_filename(mime_type),
+        data=data,
     )
     await set_grievance_fields(
         session, grievance_id=grievance_id, photo_path=path, photo_media_id=None
@@ -408,33 +436,50 @@ async def replace_photo(
             detail="Photo re-check failed; please try again.",
         ) from None
 
+    logger.info(
+        "grievance_photo_updated",
+        extra={"grievance_id": str(grievance_id), "user_id": str(user.id)},
+    )
     return await _draft_response(session, grievance_id)
 
 
-@router.post("/{grievance_id}/confirm")
+@router.post("/{grievance_id}/confirm", response_model=GrievanceConfirmResponse)
 async def confirm_draft(
     grievance_id: UUID,
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     user: Annotated[User, Depends(get_current_user)],
-) -> dict[str, str | int | None]:
+) -> GrievanceConfirmResponse:
     grievance = await get_grievance(session, grievance_id=grievance_id)
     grievance = _require_owner(grievance, user)
-    if grievance.status != "awaiting_confirmation":
+    if grievance.status not in ("awaiting_confirmation", "photo_mismatch"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot confirm a grievance in status {grievance.status!r}",
         )
 
     http_client = request.app.state.http_client
+    if grievance.status == "photo_mismatch":
+        # The mismatch warning is advisory: the citizen may file anyway. Move to
+        # awaiting_confirmation (and build the receipt the pipeline skipped)
+        # before finalizing, keeping the mismatch on record for the official.
+        await accept_photo_mismatch(grievance_id, settings, http_client)
     outcome = await finalize_grievance(settings, http_client, grievance_id=grievance_id)
-    return {
-        "status": outcome.status,
-        "human_id": outcome.human_id,
-        "duplicate_of_human_id": outcome.duplicate_of_human_id,
-        "report_count": outcome.report_count,
-    }
+    logger.info(
+        "grievance_confirmed",
+        extra={
+            "grievance_id": str(grievance_id),
+            "user_id": str(user.id),
+            "status": outcome.status,
+        },
+    )
+    return GrievanceConfirmResponse(
+        status=outcome.status,
+        human_id=outcome.human_id,
+        duplicate_of_human_id=outcome.duplicate_of_human_id,
+        report_count=outcome.report_count,
+    )
 
 
 @router.get("", response_model=list[GrievanceSummary])
@@ -478,6 +523,7 @@ async def get_grievance_detail(
         dispatch_ref=grievance.dispatch_ref,
         events=[GrievanceEventRead.model_validate(event) for event in events],
         pdf_url=f"/api/grievances/{grievance.id}/pdf" if grievance.pdf_path else None,
+        photo_url=f"/api/grievances/{grievance.id}/photo" if grievance.photo_path else None,
         category_id=grievance.category_id,
         category_label=category.label if grievance.category_id else None,
         domain_label=DOMAIN_LABELS.get(category.parent_key) if grievance.category_id else None,
@@ -516,6 +562,33 @@ async def stream_voice_note(
             status_code=status.HTTP_404_NOT_FOUND, detail="Voice note is unavailable"
         )
     return FileResponse(audio_path, media_type=message.get("mime_type") or "audio/webm")
+
+
+@router.get("/{grievance_id}/photo")
+async def download_photo(
+    grievance_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> FileResponse:
+    """The citizen's own evidence photo. Same ownership check as the PDF -- the
+    image is personal data and must never be readable by ticket id alone."""
+    grievance = await get_grievance(session, grievance_id=grievance_id)
+    grievance = _require_owner(grievance, user)
+    if not grievance.photo_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No photo attached")
+    photo_path = artifact_path(settings, grievance.photo_path)
+    if not photo_path.is_file():
+        logger.warning(
+            "grievance_photo_missing",
+            extra={"grievance_id": str(grievance_id), "photo_path": str(photo_path)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Photo artifact is unavailable"
+        )
+    return FileResponse(
+        photo_path, media_type=mimetypes.guess_type(photo_path.name)[0] or "image/jpeg"
+    )
 
 
 @router.get("/{grievance_id}/pdf")

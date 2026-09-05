@@ -1,21 +1,26 @@
 """Government official email-OTP authentication and scoped triage API."""
 
 import hashlib
+import mimetypes
 import logging
 import secrets
 import smtplib
 from email.message import EmailMessage
+from datetime import timedelta
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.config import Settings, get_settings
 from jan_setu.db import get_session, utc_now
-from jan_setu.db.models import Grievance, OfficialUser
+from jan_setu.pipeline.media import artifact_path
+from jan_setu.db.models import Grievance, OfficialLoginChallenge, OfficialUser
 from jan_setu.logctx import request_id_var
 from jan_setu.pipeline.taxonomy import (
     TAXONOMY_VERSION,
@@ -48,7 +53,6 @@ class OfficialCodeRequest(BaseModel):
 class OfficialCodeRequested(BaseModel):
     status: str = "accepted"
     challenge_id: UUID
-    dev_code: str | None = None
 
 
 class OfficialCodeVerify(BaseModel):
@@ -74,6 +78,23 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.strip().lower().encode()).hexdigest()
 
 
+async def _recent_official_challenge_count(session: AsyncSession, *, email_hash: str) -> int:
+    """Challenges issued for this email in the last hour. Without this, the
+    per-challenge 5-attempt lockout is meaningless — an attacker can just
+    request a fresh challenge (no auth required) after every 5 guesses and
+    keep brute-forcing the 6-digit code indefinitely."""
+    since = utc_now() - timedelta(hours=1)
+    result = await session.execute(
+        select(func.count())
+        .select_from(OfficialLoginChallenge)
+        .where(
+            OfficialLoginChallenge.email_hash == email_hash,
+            OfficialLoginChallenge.created_at >= since,
+        )
+    )
+    return result.scalar_one()
+
+
 def _official_token(settings: Settings, official: OfficialUser) -> str:
     now = utc_now()
     return jwt.encode(
@@ -97,6 +118,7 @@ async def require_official(
 ) -> OfficialUser:
     authorization = request.headers.get("Authorization", "")
     if not authorization.startswith("Bearer "):
+        logger.warning("official_token_rejected", extra={"reason": "missing_token"})
         raise HTTPException(status_code=401, detail="Missing official access token")
     try:
         payload = jwt.decode(
@@ -106,9 +128,14 @@ async def require_official(
             audience=OFFICIAL_TOKEN_AUDIENCE,
         )
     except jwt.PyJWTError as exc:
+        logger.warning("official_token_rejected", extra={"reason": "invalid_signature_or_expired"})
         raise HTTPException(status_code=401, detail="Invalid official access token") from exc
     official = await get_official(session, official_id=payload["sub"])
     if official is None or not official.active or official.role not in OFFICIAL_ROLES:
+        logger.warning(
+            "official_token_rejected",
+            extra={"reason": "official_not_found_or_inactive", "official_id": payload.get("sub")},
+        )
         raise HTTPException(status_code=401, detail="Unknown official")
     return official
 
@@ -123,8 +150,15 @@ def _send_official_code_email(
     message.set_content(f"Your one-time Jan Setu code is {code}. It expires in 10 minutes.")
     try:
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=5) as smtp:
+            smtp.ehlo()
+            # Opportunistic upgrade: the OTP is sensitive in transit, and most
+            # real relays advertise STARTTLS. Local dev/test SMTP debug servers
+            # (e.g. aiosmtpd on smtp_port=1025) don't, so this is a no-op there.
+            if smtp.has_extn("starttls"):
+                smtp.starttls()
+                smtp.ehlo()
             smtp.send_message(message)
-    except OSError:
+    except (OSError, smtplib.SMTPException):
         logger.exception("official_otp_delivery_failed", extra={"official_id": official_id})
 
 
@@ -136,12 +170,22 @@ async def request_official_code(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> OfficialCodeRequested:
     email = body.email.strip().lower()
+    email_hash = _hash(email)
+    # Rate limit by email hash (not by whether the account exists) so the
+    # 429 itself never leaks account existence.
+    if await _recent_official_challenge_count(session, email_hash=email_hash) >= (
+        settings.official_code_max_per_hour
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many code requests for this email. Try again later.",
+        )
     official = await get_official_by_email(session, email=email)
     code = f"{secrets.randbelow(1_000_000):06d}"
     challenge = await create_official_challenge(
         session,
         official_user_id=official.id if official else None,
-        email_hash=_hash(email),
+        email_hash=email_hash,
         code_hash=_hash(code),
     )
     # Generic response prevents account enumeration; sending the mail after the
@@ -153,10 +197,9 @@ async def request_official_code(
             _send_official_code_email, settings, official.email, code, str(official.id)
         )
     await session.commit()
-    return OfficialCodeRequested(
-        challenge_id=challenge.id,
-        dev_code=code if settings.environment == "development" and official else None,
-    )
+    # The code is never returned to the caller: it reaches the official only by
+    # email. Local demos use OFFICIAL_DEV_LOGIN_CODE instead.
+    return OfficialCodeRequested(challenge_id=challenge.id)
 
 
 @router.post("/auth/verify", response_model=OfficialSession)
@@ -172,22 +215,63 @@ async def verify_official_code(
         or challenge.expires_at <= utc_now()
         or challenge.attempt_count >= 5
     ):
+        logger.warning(
+            "official_otp_rejected",
+            extra={
+                "reason": "challenge_invalid_expired_or_consumed",
+                "challenge_id": str(body.challenge_id),
+            },
+        )
         raise HTTPException(status_code=401, detail="Invalid or expired code")
     challenge.attempt_count += 1
-    if (
-        not secrets.compare_digest(challenge.code_hash, _hash(body.code))
-        or not challenge.official_user_id
-    ):
+    code_matches = secrets.compare_digest(challenge.code_hash, _hash(body.code))
+    used_dev_code = False
+    # Local-demo escape hatch. It replaces only the code comparison -- the
+    # challenge must still be live and bound to a real, active official -- and
+    # it still burns an attempt, so it cannot be brute-forced. Settings refuses
+    # to load with this set outside development/test.
+    if not code_matches and settings.official_dev_login_code is not None:
+        code_matches = settings.environment in {"development", "test"} and (
+            secrets.compare_digest(settings.official_dev_login_code.get_secret_value(), body.code)
+        )
+        if code_matches:
+            used_dev_code = True
+    if not code_matches or not challenge.official_user_id:
         await session.commit()
+        logger.warning(
+            "official_otp_rejected",
+            extra={
+                "reason": "invalid_code",
+                "challenge_id": str(body.challenge_id),
+                "attempt": challenge.attempt_count,
+            },
+        )
         raise HTTPException(status_code=401, detail="Invalid or expired code")
     official = await get_official(session, official_id=challenge.official_user_id)
     if official is None or not official.active:
+        logger.warning(
+            "official_otp_rejected",
+            extra={
+                "reason": "official_not_found_or_inactive",
+                "official_id": str(challenge.official_user_id),
+            },
+        )
         raise HTTPException(status_code=401, detail="Invalid or expired code")
     challenge.consumed_at = utc_now()
     official.last_login_at = utc_now()
     await add_official_audit(
         session, official_user_id=official.id, grievance_id=None, action="login"
     )
+    if used_dev_code:
+        logger.warning(
+            "official_dev_login_used",
+            extra={"official_id": str(official.id), "environment": settings.environment},
+        )
+    else:
+        logger.info(
+            "official_login_succeeded",
+            extra={"official_id": str(official.id), "role": official.role},
+        )
     await session.commit()
     return OfficialSession(
         access_token=_official_token(settings, official),
@@ -219,6 +303,10 @@ def _queue_item(grievance: Grievance) -> dict[str, Any]:
         "confidence": grievance.confidence,
         "address": grievance.location_address,
         "issue_text": grievance.issue_text,
+        "photo_url": (
+            f"/api/official/grievances/{grievance.id}/photo" if grievance.photo_path else None
+        ),
+        "image_match_status": grievance.image_match_status,
         "structured_facts": grievance.structured_facts,
         "routing": grievance.routing_snapshot,
         "flags": list(grievance.flags or []),
@@ -336,8 +424,44 @@ async def official_action(
         after=after,
         request_id=request_id_var.get(),
     )
+    logger.info(
+        "official_action_recorded",
+        extra={
+            "official_id": str(official.id),
+            "grievance_id": str(grievance.id),
+            "action": body.action,
+            "role": official.role,
+        },
+    )
     await session.commit()
     return after
+
+
+@router.get("/grievances/{grievance_id}/photo")
+async def official_grievance_photo(
+    grievance_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    official: Annotated[OfficialUser, Depends(require_official)],
+) -> FileResponse:
+    """Citizen evidence photo for the reviewing official. Scoped by the same
+    jurisdiction check as the case itself, and recorded as an evidence view --
+    the login copy promises that evidence access is audited."""
+    grievance = await get_grievance(session, grievance_id=grievance_id)
+    if grievance is None or not official_can_access(official, grievance):
+        raise HTTPException(status_code=404, detail="Complaint not found")
+    if not grievance.photo_path:
+        raise HTTPException(status_code=404, detail="No photo attached")
+    photo_path = artifact_path(settings, grievance.photo_path)
+    if not photo_path.is_file():
+        raise HTTPException(status_code=404, detail="Photo artifact is unavailable")
+    await add_official_audit(
+        session, official_user_id=official.id, grievance_id=grievance.id, action="view_evidence"
+    )
+    await session.commit()
+    return FileResponse(
+        photo_path, media_type=mimetypes.guess_type(photo_path.name)[0] or "image/jpeg"
+    )
 
 
 @router.get("/metrics")

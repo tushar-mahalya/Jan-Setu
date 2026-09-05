@@ -162,6 +162,18 @@ export function apiPostEmpty<T>(path: string, options?: RequestOptions): Promise
  * attached, since plain <a href> downloads cannot carry custom headers.
  * Triggers a browser download via a temporary object-URL anchor.
  */
+/**
+ * Fetches a binary resource with auth and returns an object URL for rendering
+ * (e.g. <img src>), since plain <img> requests cannot carry an Authorization
+ * header. Callers must URL.revokeObjectURL the result when done.
+ */
+export async function fetchObjectUrl(path: string): Promise<string> {
+  const url = /^https?:\/\//i.test(path) ? path : `${API_BASE}${path}`;
+  const response = await fetch(url, { credentials: "include", headers: buildHeaders(undefined, true) });
+  if (!response.ok) throw new ApiError(response.status, await readErrorMessage(response));
+  return URL.createObjectURL(await response.blob());
+}
+
 export async function downloadWithAuth(path: string, filename: string): Promise<void> {
   const url = /^https?:\/\//i.test(path) ? path : `${API_BASE}${path}`;
   let response: Response;

@@ -1,0 +1,223 @@
+JAN-SETU: PROBLEMS AND FEATURES
+
+Jan-Setu is a civic complaint platform that helps people report local problems—such as damaged roads, broken streetlights, drainage issues, sanitation concerns, or safety-related problems—and follow what happens next.
+
+It works through a citizen web app and a WhatsApp-based flow. The aim is simple: make it easier for citizens to file a complete complaint, send it to the right government team, and keep the process visible.
+
+======================================================================
+PROBLEM 1: Filing a complaint takes too much time and effort
+======================================================================
+
+Many people must visit offices more than once to report a civic issue. This is difficult for people living far from offices, people with limited time, and people who are not comfortable with government procedures. It can also create unfairness when people feel they need personal connections to get heard.
+
+JAN-SETU FEATURES
+
+• File from a phone
+  Citizens can report an issue from the Jan-Setu web app instead of starting with an office visit.
+
+• WhatsApp-based complaint flow
+  People can use a familiar WhatsApp conversation to share their location, explain the problem, attach a photo if available, and confirm the complaint.
+
+• One identity across channels
+  A WhatsApp-linked phone number is used for sign-in, so the same person can use both the web app and WhatsApp flow.
+
+• Guided, step-by-step filing
+  The app breaks filing into simple steps: select location, explain the issue, add a photo if wanted, review details, and submit.
+
+
+======================================================================
+PROBLEM 2: People may struggle to describe an issue in writing
+======================================================================
+
+Not everyone is comfortable typing a long complaint, especially when using a phone, speaking a local language, or dealing with an urgent problem outdoors.
+
+JAN-SETU FEATURES
+
+• Voice complaint recording
+  Citizens can record a voice note instead of typing everything.
+
+• Speech converted to text
+  The system converts recorded speech into written complaint details for processing.
+
+• Text, voice, and photo support
+  Citizens can explain the issue in the way that is easiest for them: typed text, a voice recording, or an optional photo.
+
+• Multilingual citizen interface
+  The web app supports English, Hindi, Bengali, Marathi, Tamil, and Telugu, helping more people use the service comfortably.
+
+
+======================================================================
+PROBLEM 3: Citizens do not know which department should receive a complaint
+======================================================================
+
+A person may know there is a pothole, broken drain, or streetlight problem, but may not know which municipal department is responsible. Wrong routing wastes time for both citizens and officials.
+
+JAN-SETU FEATURES
+
+• Location capture
+  Citizens choose the location of the problem on a map or use their phone’s current location. They can also add a nearby landmark.
+
+• Automatic issue understanding
+  The system reads the complaint details and identifies the likely issue category.
+
+• Suggested department routing
+  Based on the problem type and location, Jan-Setu identifies the appropriate municipal department or flags the case for official review when the route is unclear.
+
+• Citizen review before confirmation
+  Before the complaint is finalised, citizens can review the system’s summary and key details.
+
+
+======================================================================
+PROBLEM 4: Incomplete complaints delay government action
+======================================================================
+
+Officials often receive complaints without a usable location, contact details, or clear description. They then need to call the citizen or wait for more information, delaying the response.
+
+JAN-SETU FEATURES
+
+• Required complaint details
+  The filing flow asks for the essential information needed to act: location and a description of the issue.
+
+• Clear field guidance
+  The app tells users what information is needed before they can continue.
+
+• Location confirmation in WhatsApp
+  When someone shares a WhatsApp location, Jan-Setu shows the detected address and asks them to confirm it.
+
+• Complaint review screen
+  Citizens can inspect the prepared complaint before submitting it, reducing mistakes and missing information.
+
+
+======================================================================
+PROBLEM 5: Photos may be unrelated or misleading
+======================================================================
+
+Photos can help officials understand a complaint, but an unclear or unrelated image can waste review time.
+
+JAN-SETU FEATURES
+
+• Optional photo evidence
+  Citizens can attach a photo of the issue during filing.
+
+• Photo and description check
+  Jan-Setu compares the submitted image with the written complaint. If they appear inconsistent, it flags the case instead of silently treating the photo as reliable.
+
+• Choice to replace or continue
+  A citizen can provide a replacement photo or continue without one when a photo does not match the complaint details.
+
+• Evidence visible to officials
+  Officials can see the complaint text, location, system findings, and flags while reviewing a case.
+
+
+======================================================================
+PROBLEM 6: Staff spend too much time manually sorting complaints
+======================================================================
+
+Government teams may receive many complaints each day. Reading every complaint, deciding its category, checking priority, and forwarding it manually slows down the entire process.
+
+JAN-SETU FEATURES
+
+• Automatic categorisation
+  The system prepares a category and a short summary for each complaint.
+
+• Priority and safety indicators
+  Cases that may need immediate attention are marked for the officials’ queue.
+
+• Short-term and long-term work grouping
+  Complaints can be identified as likely short-term fixes or longer-term projects, helping staff plan work.
+
+• Official review queue
+  Government staff have a separate console to review cases needing attention. They can approve a route, redirect a case, ask the citizen for clarification, or reject it with a written reason.
+
+• Clear case information for officials
+  The official view shows complaint details, location, category, confidence, routing information, system flags, and a history of actions.
+
+
+======================================================================
+PROBLEM 7: Many reports describe the same non-urgent issue
+======================================================================
+
+If many people report the same pothole, drain blockage, or streetlight failure, officials can receive many separate tickets for one local problem.
+
+JAN-SETU FEATURES
+
+• Duplicate report detection
+  Jan-Setu looks for similar non-priority complaints in the same area.
+
+• Combined reporting window
+  Similar routine reports can be grouped so the department receives one clearer issue with the number of affected citizens.
+
+• Citizen acknowledgement
+  When a report is linked to an existing local issue, the citizen is still informed that their report was counted.
+
+• Fast handling for priority cases
+  Priority complaints do not wait in the routine grouping window. They move toward immediate dispatch or official review.
+
+
+======================================================================
+PROBLEM 8: Citizens cannot see what happened after filing
+======================================================================
+
+After filing through a traditional channel, people often do not know whether the complaint was received, assigned, being worked on, or closed. This leads to repeated calls and office visits.
+
+JAN-SETU FEATURES
+
+• Complaint receipt and ticket ID
+  After confirmation, the citizen receives a clear complaint reference number.
+
+• Personal dashboard
+  Signed-in citizens can see their recent complaints in one place.
+
+• Complaint detail page
+  Each complaint has its own page showing its category, date, current status, and status history.
+
+• Plain status labels
+  The platform uses understandable stages such as processing, awaiting review, submitted, grouped with a similar report, or completed.
+
+• Status by WhatsApp
+  The WhatsApp flow recognises simple status requests, including “status” and “स्थिति”, and can return the current update without requiring the web app.
+
+
+======================================================================
+PROBLEM 9: Citizens and officials need a trustworthy process
+======================================================================
+
+People need confidence that their complaint was received and handled fairly. Officials also need enough information to make accountable decisions.
+
+JAN-SETU FEATURES
+
+• Confirmation before final filing
+  Citizens review and confirm the complaint before it enters the handling process.
+
+• Complaint summary document
+  The system prepares a complaint summary document containing the issue, location, category, department, priority, and supporting details.
+
+• Action history
+  Important status changes and official actions are recorded as part of the complaint history.
+
+• Reasoned official decisions
+  Officials provide a short decision note when approving, redirecting, rejecting, or requesting clarification.
+
+• Reliable handling when services fail
+  If speech conversion, location lookup, or automatic classification is temporarily unavailable, the complaint is flagged for review rather than being discarded.
+
+
+======================================================================
+WHAT JAN-SETU MAKES EASIER
+======================================================================
+
+For citizens:
+• Report local problems without beginning with an office visit.
+• Use a phone, location, voice, text, and photos.
+• Avoid needing to understand department structures.
+• Receive a ticket number and track progress.
+• Use a clearer and more accessible complaint process.
+
+For government officials:
+• Receive more complete complaint information.
+• Spend less time sorting routine complaints manually.
+• See priority, uncertain, and safety-related cases clearly.
+• Reduce duplicate reports for the same local problem.
+• Keep a recorded history of complaint decisions and actions.
+
+In short, Jan-Setu connects citizens and government teams through a simpler, more structured, and more visible way to report and manage civic problems.

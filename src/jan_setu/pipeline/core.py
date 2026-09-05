@@ -12,9 +12,9 @@ citizen's complaint is never lost to a flaky free-tier API.
 
 import logging
 import mimetypes
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -37,13 +37,13 @@ from jan_setu.repositories import (
     set_grievance_fields,
 )
 from jan_setu.pipeline.stt import transcribe_clip
+from jan_setu.pipeline.routing import resolve_route
 from jan_setu.pipeline.taxonomy import (
     DEMO_JURISDICTION_ID,
     TAXONOMY_VERSION,
     category_or_default,
     department_for_category,
     evaluate_routing_policy,
-    route_for_category,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,12 +155,24 @@ async def _fetch_photo(
     photo_path: str | None,
 ) -> tuple[bytes | None, str | None]:
     if photo_path:
+        # Must re-root through artifact_path: the host API stores a path relative
+        # to its own upload_dir ("data/uploads/..."), which does not resolve
+        # inside the worker container (upload_dir="/data/uploads"). Reading the
+        # stored string directly silently dropped every photo from extraction.
+        resolved = artifact_path(settings, photo_path)
         try:
-            data = Path(photo_path).read_bytes()
-        except OSError:
-            logger.warning("photo_read_failed")
+            data = resolved.read_bytes()
+        except OSError as exc:
+            logger.warning(
+                "photo_read_failed",
+                extra={
+                    "photo_path": str(photo_path),
+                    "resolved_path": str(resolved),
+                    "error": str(exc),
+                },
+            )
             return None, None
-        return data, mimetypes.guess_type(photo_path)[0] or "image/jpeg"
+        return data, mimetypes.guess_type(resolved.name)[0] or "image/jpeg"
     if not photo_media_id:
         return None, None
     try:
@@ -181,6 +193,7 @@ async def _build_and_store_pdf(
     grievance: Grievance,
     photo_bytes: bytes | None,
 ) -> None:
+    start_ms = time.perf_counter()
     department = department_for_category(grievance.category or "other")
     summary = PdfSummary(
         human_id=grievance.human_id,
@@ -197,6 +210,10 @@ async def _build_and_store_pdf(
     pdf_bytes = build_grievance_pdf(summary, photo_bytes)
     path = save_upload(settings, grievance_id=str(grievance.id), name="summary.pdf", data=pdf_bytes)
     await set_grievance_fields(session, grievance_id=grievance.id, pdf_path=path)
+    duration_ms = round((time.perf_counter() - start_ms) * 1000, 2)
+    _log_stage(
+        "pdf_generated", grievance.id, duration_ms=duration_ms, pdf_size_bytes=len(pdf_bytes)
+    )
 
 
 def render_confirmation_summary(grievance: Grievance) -> str:
@@ -227,6 +244,7 @@ async def run_pipeline(
 
         address = grievance.location_address
         if not address and grievance.location_latitude is not None:
+            start_geocode = time.perf_counter()
             geocode = await reverse_geocode_cached(
                 session,
                 settings,
@@ -235,12 +253,24 @@ async def run_pipeline(
                 http_client,
             )
             address = geocode.display_address
+            geocode_duration = round((time.perf_counter() - start_geocode) * 1000, 2)
+            _log_stage(
+                "geocoded", grievance_id, duration_ms=geocode_duration, has_address=bool(address)
+            )
 
+        start_photo = time.perf_counter()
         photo_bytes, photo_mime = await _fetch_photo(
             settings,
             http_client,
             photo_media_id=grievance.photo_media_id,
             photo_path=grievance.photo_path,
+        )
+        photo_duration = round((time.perf_counter() - start_photo) * 1000, 2)
+        _log_stage(
+            "photo_fetched",
+            grievance_id,
+            duration_ms=photo_duration,
+            photo_available=bool(photo_bytes),
         )
         extraction = await extract_issue(
             session,
@@ -258,7 +288,16 @@ async def run_pipeline(
             extraction_confidence=extraction.confidence,
         )
         category = category_or_default(extraction.category_id)
-        route = route_for_category(extraction.category_id)
+        route = await resolve_route(
+            session,
+            category_key=extraction.category_id,
+            jurisdiction_id=grievance.jurisdiction_id or DEMO_JURISDICTION_ID,
+        )
+        if route is None:
+            logger.warning(
+                "routing_fallback",
+                extra={"grievance_id": str(grievance_id), "reason": "no_route_found"},
+            )
         _log_stage(
             "extract_and_route",
             grievance_id,
@@ -269,11 +308,20 @@ async def run_pipeline(
 
         image_match_status = "none"
         if photo_bytes is not None:
-            image_match_status = "mismatched" if extraction.contradictions else "matched"
+            if extraction.degraded:
+                image_match_status = "unverified"
+            else:
+                image_match_status = "mismatched" if extraction.contradictions else "matched"
 
         flags = list(stt_flags)
         if extraction.degraded:
             flags.append("classification_failed")
+            if photo_bytes is not None:
+                flags.append("image_check_degraded")
+            logger.warning(
+                "classification_fallback",
+                extra={"grievance_id": str(grievance_id), "reason": extraction.degradation_reason},
+            )
         if policy.needs_official_review:
             flags.append("official_review_required")
         if extraction.multiple_issues:
@@ -373,6 +421,53 @@ async def run_pipeline(
         )
 
 
+async def accept_photo_mismatch(
+    grievance_id: Any,
+    settings: Settings,
+    http_client: httpx.AsyncClient,
+) -> None:
+    """photo_mismatch -> awaiting_confirmation when the citizen keeps the photo
+    and files anyway. The mismatch stays on the record (``image_match_status``
+    and the contradictions) so the assigned official reviews the original
+    evidence; unlike ``recheck_image(proceed_without_photo=True)`` the photo is
+    not dropped, and the receipt PDF that photo_mismatch skipped is built here.
+    """
+    async with AsyncSessionLocal() as session:
+        grievance = await get_grievance(session, grievance_id=grievance_id)
+        if grievance is None:
+            raise ValueError(f"grievance {grievance_id} not found")
+        if grievance.status != "photo_mismatch":
+            logger.warning(
+                "accept_photo_skipped",
+                extra={"grievance_id": str(grievance_id), "reason": "not_in_photo_mismatch_status"},
+            )
+            return
+
+        photo_bytes, _ = await _fetch_photo(
+            settings,
+            http_client,
+            photo_media_id=grievance.photo_media_id,
+            photo_path=grievance.photo_path,
+        )
+        flags = list(dict.fromkeys(grievance.flags or []))
+        if "photo_mismatch_accepted" not in flags:
+            flags.append("photo_mismatch_accepted")
+        grievance = await set_grievance_fields(
+            session,
+            grievance_id=grievance_id,
+            status="awaiting_confirmation",
+            flags=flags,
+        )
+        await _build_and_store_pdf(session, settings, grievance, photo_bytes)
+        await add_grievance_event(
+            session,
+            grievance_id=grievance_id,
+            status="awaiting_confirmation",
+            note="Citizen filed despite the photo/description mismatch",
+        )
+        await session.commit()
+
+
 async def recheck_image(
     grievance_id: Any,
     settings: Settings,
@@ -405,21 +500,34 @@ async def recheck_image(
                     image_bytes=photo_bytes,
                     mime_type=photo_mime or "image/jpeg",
                 )
-                image_match_status = "matched" if match.matches else "mismatched"
+                if match.degraded:
+                    image_match_status = "unverified"
+                else:
+                    image_match_status = "matched" if match.matches else "mismatched"
 
         next_status = (
             "photo_mismatch" if image_match_status == "mismatched" else "awaiting_confirmation"
         )
+        update_fields: dict[str, Any] = {
+            "image_match_status": image_match_status,
+            "status": next_status,
+        }
+        if image_match_status == "unverified":
+            existing_flags = list(dict.fromkeys(grievance.flags or []))
+            if "image_check_degraded" not in existing_flags:
+                existing_flags.append("image_check_degraded")
+            update_fields["flags"] = existing_flags
         grievance = await set_grievance_fields(
             session,
             grievance_id=grievance_id,
-            image_match_status=image_match_status,
-            status=next_status,
+            **update_fields,
         )
         if next_status == "awaiting_confirmation":
             await _build_and_store_pdf(session, settings, grievance, photo_bytes)
         await add_grievance_event(session, grievance_id=grievance_id, status=next_status)
         await session.commit()
+
+        _log_stage("image_rechecked", grievance_id, image_match_status=image_match_status)
 
         department = department_for_category(grievance.category or "other")
         return PipelineResult(
@@ -510,7 +618,11 @@ async def reextract_grievance(
             jurisdiction_known=bool(grievance.location_address),
             extraction_confidence=confidence,
         )
-        route = route_for_category(category.key)
+        route = await resolve_route(
+            session,
+            category_key=category.key,
+            jurisdiction_id=grievance.jurisdiction_id or DEMO_JURISDICTION_ID,
+        )
         merged_facts = {
             **facts,
             "alternatives": list(extraction.alternatives),
@@ -650,6 +762,10 @@ async def finalize_grievance(
             exclude_grievance_id=str(grievance_id),
         )
         if duplicate is not None:
+            logger.warning(
+                "dedup_suppressed",
+                extra={"grievance_id": str(grievance_id), "reason": "duplicate_within_window"},
+            )
             master = duplicate.master
             new_count = master.report_count + 1
             await set_grievance_fields(
@@ -698,6 +814,10 @@ async def dispatch_grievance(
             raise ValueError(f"grievance {grievance_id} not found")
         snapshot = grievance.routing_snapshot or {}
         if snapshot and not snapshot.get("dispatch_enabled", False):
+            logger.warning(
+                "dispatch_disabled",
+                extra={"grievance_id": str(grievance_id), "reason": "dispatch_not_enabled"},
+            )
             await set_grievance_fields(
                 session,
                 grievance_id=grievance_id,
@@ -713,8 +833,18 @@ async def dispatch_grievance(
             await session.commit()
             return FinalizeOutcome(status="registered", human_id=grievance.human_id)
 
+        # Commit (not just flush) the "dispatching" status BEFORE the external
+        # call: sweep_stuck_dispatching only finds rows already durably in this
+        # status, so a crash mid-dispatch must leave that mark behind, or the
+        # sweep built to recover it never sees the row and the complaint is
+        # silently lost. This makes dispatch at-least-once (a retry after a
+        # crash may resend to a department that already got it) rather than
+        # exactly-once.
+        # ponytail: at-least-once via status-before-call, same tradeoff already
+        # accepted for outbound WhatsApp sends. A dispatcher-side idempotency
+        # key is the upgrade path if a real municipal API needs exactly-once.
         await set_grievance_fields(session, grievance_id=grievance_id, status="dispatching")
-        await session.flush()
+        await session.commit()
 
         department = department_for_category(grievance.category or "other")
         dispatcher = get_dispatcher(settings, http_client)
@@ -723,12 +853,23 @@ async def dispatch_grievance(
             artifact_path(settings, grievance.pdf_path).read_bytes() if grievance.pdf_path else b""
         )
 
+        start_dispatch = time.perf_counter()
         try:
             ref = await dispatcher.dispatch(
                 human_id=grievance.human_id,
                 department=department,
                 summary=summary,
                 pdf_bytes=pdf_bytes,
+            )
+            dispatch_duration = round((time.perf_counter() - start_dispatch) * 1000, 2)
+            logger.info(
+                "dispatch_sent",
+                extra={
+                    "grievance_id": str(grievance_id),
+                    "department": department.key,
+                    "duration_ms": dispatch_duration,
+                    "status": "success",
+                },
             )
         except DispatchError:
             attempts = grievance.dispatch_attempts + 1

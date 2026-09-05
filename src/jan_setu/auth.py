@@ -135,16 +135,23 @@ async def create_verification(
     this phone has requested too many codes in the last hour."""
     phone = normalize_phone(phone)
     since = utc_now() - timedelta(hours=1)
-    if (
-        await count_recent_verifications(session, phone=phone, since=since)
-        >= settings.verification_max_per_hour
-    ):
+    recent_count = await count_recent_verifications(session, phone=phone, since=since)
+    if recent_count >= settings.verification_max_per_hour:
+        logger.warning(
+            "verification_code_rejected",
+            extra={"reason": "rate_limit_exceeded", "attempt": recent_count},
+        )
         raise RateLimitExceeded(phone)
 
     code = generate_code()
     expires_at = utc_now() + timedelta(minutes=settings.verification_code_ttl_minutes)
     verification = await create_phone_verification(
         session, phone=phone, code_hash=hash_code(code), expires_at=expires_at
+    )
+    expires_in_seconds = settings.verification_code_ttl_minutes * 60
+    logger.info(
+        "verification_code_created",
+        extra={"verification_id": str(verification.id), "expires_in_seconds": expires_in_seconds},
     )
     return str(verification.id), code
 
@@ -158,12 +165,17 @@ async def verify_code_from_whatsapp(
         session, code_hash=hash_code(code_text)
     )
     if verification is None or verification.phone != normalize_phone(wa_id):
+        logger.warning("verification_failed", extra={"reason": "code_not_found_or_mismatch"})
         return msg.VERIFY_INVALID
 
     user = await upsert_user_for_verified_phone(
         session, phone=normalize_phone(wa_id), contact_id=contact_id
     )
     await mark_verification_verified(session, verification_id=verification.id, user_id=user.id)
+    logger.info(
+        "verification_verified",
+        extra={"verification_id": str(verification.id), "user_id": str(user.id)},
+    )
     return msg.VERIFY_SUCCESS
 
 
@@ -193,6 +205,11 @@ async def issue_tokens(
     await create_refresh_token(
         session, user_id=user_id, token_hash=hash_code(raw_refresh), expires_at=expires_at
     )
+    expires_in_seconds = settings.refresh_token_days * 24 * 3600
+    logger.info(
+        "access_token_issued",
+        extra={"user_id": str(user_id), "expires_in_seconds": expires_in_seconds},
+    )
     return access_token, raw_refresh
 
 
@@ -204,6 +221,7 @@ async def rotate_refresh(
     token_hash = hash_code(raw_refresh_token)
     row = await find_active_refresh_token(session, token_hash=token_hash)
     if row is None:
+        logger.warning("refresh_token_rejected", extra={"reason": "token_not_found_or_expired"})
         raise InvalidRefreshToken
     await revoke_refresh_token(session, token_hash=token_hash)
     return await issue_tokens(session, settings, user_id=str(row.user_id))
@@ -310,6 +328,10 @@ async def request_code(
             async with AsyncSessionLocal() as send_session:
                 send_status = await send_pending(send_session, settings, client, row.id)
             if send_status == "sent":
+                logger.info(
+                    "login_approval_issued",
+                    extra={"challenge_id": str(challenge.id)},
+                )
                 return RequestCodeResponse(
                     verification_id=challenge.id,
                     method="whatsapp_approval",
@@ -317,6 +339,10 @@ async def request_code(
                     requested_at=challenge.requested_at,
                     expires_at=challenge.expires_at,
                 )
+        logger.warning(
+            "login_approval_fallback",
+            extra={"reason": "send_failed", "challenge_id": str(challenge.id)},
+        )
         await mark_login_approval_fallback(session, challenge_id=challenge.id)
 
     try:
@@ -339,17 +365,30 @@ async def auth_status(
 ) -> AuthStatusResponse:
     verification = await get_phone_verification(session, verification_id=verification_id)
     if verification is None:
+        logger.warning("auth_status_failed", extra={"reason": "verification_not_found"})
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown verification_id")
 
     if verification.status == "pending":
         if verification.expires_at <= utc_now():
+            logger.info(
+                "verification_expired",
+                extra={"verification_id": verification_id, "reason": "ttl_elapsed"},
+            )
             return AuthStatusResponse(status="expired")
         return AuthStatusResponse(status="pending")
 
     if verification.status != "verified" or verification.user_id is None:
+        logger.info(
+            "verification_expired",
+            extra={"verification_id": verification_id, "reason": "not_verified"},
+        )
         return AuthStatusResponse(status="expired")
 
     if not await consume_verification(session, verification_id=verification.id):
+        logger.info(
+            "verification_already_claimed",
+            extra={"verification_id": verification_id},
+        )
         return AuthStatusResponse(status="expired")  # already claimed by another poll
 
     access_token, raw_refresh = await issue_tokens(
@@ -372,10 +411,19 @@ async def approval_status(
         session, challenge_id=body.verification_id, browser_nonce_hash=nonce_hash
     )
     if challenge is None:
+        logger.info(
+            "login_approval_expired",
+            extra={"challenge_id": str(body.verification_id), "reason": "challenge_not_found"},
+        )
         return AuthStatusResponse(status="expired")
     if challenge.expires_at <= utc_now() and challenge.status == "pending":
+        logger.info(
+            "login_approval_expired",
+            extra={"challenge_id": str(body.verification_id), "reason": "ttl_elapsed"},
+        )
         return AuthStatusResponse(status="expired")
     if challenge.status == "denied":
+        logger.info("login_approval_denied", extra={"challenge_id": str(body.verification_id)})
         return AuthStatusResponse(status="denied")
     if challenge.status != "approved":
         return AuthStatusResponse(status="pending" if challenge.status == "pending" else "expired")
@@ -383,6 +431,10 @@ async def approval_status(
         session, challenge_id=challenge.id, browser_nonce_hash=nonce_hash
     )
     if user_id is None:
+        logger.info(
+            "login_approval_already_claimed",
+            extra={"challenge_id": str(body.verification_id)},
+        )
         return AuthStatusResponse(status="expired")
     access_token, raw_refresh = await issue_tokens(session, settings, user_id=str(user_id))
     await session.commit()
@@ -399,6 +451,7 @@ async def refresh(
 ) -> RefreshResponse:
     raw_token = _extract_cookie(refresh_token)
     if raw_token is None:
+        logger.warning("refresh_rejected", extra={"reason": "missing_token"})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing refresh token"
         )
@@ -427,6 +480,9 @@ async def logout(
     if raw_token is not None:
         await revoke_refresh_token(session, token_hash=hash_code(raw_token))
         await session.commit()
+        logger.info("user_logout", extra={"status": "token_revoked"})
+    else:
+        logger.info("user_logout", extra={"status": "no_token"})
     response.delete_cookie(REFRESH_COOKIE_NAME, path="/auth")
     return {"status": "ok"}
 
@@ -447,15 +503,20 @@ async def get_current_user(
     authorization: Annotated[str | None, Header()] = None,
 ) -> User:
     if not authorization or not authorization.startswith("Bearer "):
+        logger.warning("access_token_rejected", extra={"reason": "missing_token"})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing access token")
     token = authorization.removeprefix("Bearer ").strip()
     try:
         user_id = decode_access_token(settings, token)
     except jwt.PyJWTError as exc:
+        logger.warning("access_token_rejected", extra={"reason": "invalid_signature_or_expired"})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token"
         ) from exc
     user = await get_user(session, user_id=user_id)
     if user is None:
+        logger.warning(
+            "access_token_rejected", extra={"reason": "user_not_found", "user_id": str(user_id)}
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown user")
     return user

@@ -1,5 +1,7 @@
 import hashlib
 import hmac
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -8,6 +10,8 @@ import httpx
 from pydantic import SecretStr
 
 from jan_setu.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 class WhatsAppClientUnavailable(RuntimeError):
@@ -28,6 +32,8 @@ class WhatsAppCloudClient:
                 "WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID are required."
             )
 
+        message_type = payload.get("type", "unknown")
+
         token = self.settings.whatsapp_access_token.get_secret_value()
         url = (
             f"https://graph.facebook.com/{self.settings.whatsapp_graph_api_version}/"
@@ -35,15 +41,69 @@ class WhatsAppCloudClient:
         )
         headers = {"Authorization": f"Bearer {token}"}
 
-        if self.http_client is not None:
-            response = await self.http_client.post(url, headers=headers, json=payload)
+        start = time.perf_counter()
+        try:
+            if self.http_client is not None:
+                response = await self.http_client.post(url, headers=headers, json=payload)
+            else:
+                timeout = self.settings.request_timeout_seconds
+                async with httpx.AsyncClient(timeout=timeout) as http_client:
+                    response = await http_client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+        except httpx.HTTPStatusError as exc:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            graph_error_code = None
+            try:
+                error_data = exc.response.json()
+                graph_error_code = error_data.get("error", {}).get("code")
+            except (ValueError, TypeError, KeyError):
+                pass
+            logger.warning(
+                "whatsapp_api_send_failed",
+                extra={
+                    "message_type": message_type,
+                    "status_code": exc.response.status_code,
+                    "graph_error_code": graph_error_code,
+                    "duration_ms": duration_ms,
+                },
+            )
+            raise
+        except httpx.RequestError:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            logger.warning(
+                "whatsapp_api_transport_error",
+                extra={
+                    "message_type": message_type,
+                    "duration_ms": duration_ms,
+                },
+            )
+            raise
+        except ValueError:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            logger.warning(
+                "whatsapp_api_response_decode_failed",
+                extra={
+                    "message_type": message_type,
+                    "duration_ms": duration_ms,
+                },
+            )
+            raise
 
-        async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as http_client:
-            response = await http_client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.json()
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        messages = result.get("messages") if isinstance(result, dict) else None
+        message_id = messages[0].get("id") if messages else None
+
+        logger.info(
+            "whatsapp_api_send_succeeded",
+            extra={
+                "message_type": message_type,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "message_id": message_id,
+            },
+        )
+        return result
 
     async def send_text(self, *, to: str, body: str) -> dict[str, Any]:
         return await self.send_raw(build_text_payload(to=to, body=body))

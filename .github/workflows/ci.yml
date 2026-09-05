@@ -96,6 +96,77 @@ jobs:
       - name: Check models match migrations (no drift)
         run: uv run alembic check
 
+      # A broken downgrade() is otherwise only discovered during a rollback.
+      - name: Check the downgrade path
+        run: |
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+
+  api-image:
+    name: API image (build + smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t jan-setu-api-ci .
+
+      - name: Smoke test the image
+        run: |
+          docker run -d --rm --name jan-setu-api-ci -p 127.0.0.1:8000:8000 jan-setu-api-ci
+          trap 'docker stop jan-setu-api-ci' EXIT
+          ready=""
+          for attempt in $(seq 1 20); do
+            curl --fail --silent http://127.0.0.1:8000/health >/dev/null && { ready=1; break; }
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "::error::API container never became ready; log follows"
+            docker logs jan-setu-api-ci || true
+            exit 1
+          fi
+          curl --fail --silent http://127.0.0.1:8000/health | grep -q '"status":"ok"'
+
+      - name: Validate compose file
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+  e2e:
+    name: Frontend E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        working-directory: frontend
+        run: npm run test:e2e
+
+      - name: Upload report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7
+
   frontend:
     name: Frontend (build)
     runs-on: ubuntu-latest
@@ -107,7 +178,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install dependencies
         working-directory: frontend
@@ -134,18 +205,30 @@ jobs:
       - name: Validate Nginx configuration and response headers
         run: |
           docker build -t jan-setu-frontend-ci frontend
-          docker run -d --rm --name jan-setu-frontend-ci -p 127.0.0.1:8080:80 jan-setu-frontend-ci
+          # nginx resolves the "api" upstream at startup and aborts if unknown.
+          docker run -d --rm --name jan-setu-frontend-ci --add-host api:127.0.0.1 \
+            -p 127.0.0.1:8080:80 jan-setu-frontend-ci
           trap 'docker stop jan-setu-frontend-ci' EXIT
-          for attempt in $(seq 1 20); do curl --fail --silent http://127.0.0.1:8080/ >/dev/null && break; sleep 1; done
+          ready=""
+          for attempt in $(seq 1 20); do
+            curl --fail --silent http://127.0.0.1:8080/ >/dev/null && { ready=1; break; }
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "::error::frontend container never became ready; nginx log follows"
+            docker logs jan-setu-frontend-ci || true
+            exit 1
+          fi
           curl --fail --silent http://127.0.0.1:8080/deep/link | grep -q '<div id="root">'
-          asset=$(find frontend/dist/assets -type f | head -n 1 | xargs basename)
+          # From the image, not frontend/dist: different build, different hashes.
+          asset=$(docker exec jan-setu-frontend-ci sh -c 'ls /usr/share/nginx/html/assets' | head -n 1)
           curl --fail --silent --head "http://127.0.0.1:8080/assets/$asset" | grep -qi 'Cache-Control: public, max-age=31536000, immutable'
           curl --fail --silent --head http://127.0.0.1:8080/ | grep -qi 'Cache-Control: no-cache'
 
   ci-success:
     name: CI success
     if: always()
-    needs: [lint, test, migrations, frontend]
+    needs: [lint, test, migrations, api-image, e2e, frontend]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any required job failed

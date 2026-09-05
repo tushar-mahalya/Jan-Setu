@@ -15,6 +15,7 @@ same technique guards the post-pipeline Confirm/Cancel card: its buttons carry
 the draft grievance id, so a stale card from a superseded draft is a no-op.
 """
 
+import logging
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
@@ -28,6 +29,8 @@ from jan_setu.whatsapp.client import (
     build_reply_buttons_payload,
     build_text_payload,
 )
+
+logger = logging.getLogger(__name__)
 
 STATE_AWAITING_LOCATION = "awaiting_location"
 STATE_CONFIRMING_LOCATION = "confirming_location"
@@ -242,16 +245,27 @@ def advance(
     # greeting is merged into the first functional message rather than sent as a
     # separate bubble that could render after it.
     if state is None or state == STATE_EXPIRED:
+        is_restart = state == STATE_EXPIRED
         greeting_prefix = f"{msg.GREETING}\n\n"
         if is_location:
-            return _stage_location_and_confirm(
+            result = _stage_location_and_confirm(
                 wa_id=wa_id,
                 context=context,
                 inbound=inbound,
                 geocode=geocode,
                 body_prefix=greeting_prefix,
             )
-        return FsmResult(
+            event_name = "conversation_restarted" if is_restart else "conversation_started"
+            extra: dict[str, Any] = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "location",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info(event_name, extra=extra)
+            return result
+        result = FsmResult(
             state=STATE_AWAITING_LOCATION,
             context=context,
             intents=[
@@ -260,12 +274,35 @@ def advance(
                 )
             ],
         )
+        event_name = "conversation_restarted" if is_restart else "conversation_started"
+        extra = {
+            "from_state": state,
+            "to_state": result.state,
+            "trigger": "greeting",
+        }
+        if result.context.get("draft", {}).get("grievance_id"):
+            extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+        logger.info(event_name, extra=extra)
+        return result
 
     if state == STATE_AWAITING_LOCATION:
         if is_location:
-            return _stage_location_and_confirm(
+            result = _stage_location_and_confirm(
                 wa_id=wa_id, context=context, inbound=inbound, geocode=geocode
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "location",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
+        logger.warning(
+            "conversation_reprompted",
+            extra={"state": state, "reason": "location_reprompt"},
+        )
         return FsmResult(
             state=STATE_AWAITING_LOCATION,
             context=context,
@@ -275,29 +312,60 @@ def advance(
     if state == STATE_CONFIRMING_LOCATION:
         if is_location:
             # A fresh location supersedes the staged one (new token).
-            return _stage_location_and_confirm(
+            result = _stage_location_and_confirm(
                 wa_id=wa_id, context=context, inbound=inbound, geocode=geocode
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "location_restage",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         base, token = parse_confirm_reply(inbound.reply_id)
         staged_token = context["location"].get("source_message_id")
         if token == staged_token and base == msg.CONFIRM_YES_ID:
             context["location"]["confirmed_at"] = utc_now().isoformat()
-            return FsmResult(
+            result = FsmResult(
                 state=STATE_AWAITING_ISSUE,
                 context=context,
                 intents=[_ask_issue_intent(wa_id)],
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "confirm_yes",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
         if token == staged_token and base == msg.CONFIRM_NO_ID:
             context["location"] = default_context()["location"]
-            return FsmResult(
+            result = FsmResult(
                 state=STATE_AWAITING_LOCATION,
                 context=context,
                 intents=[_location_request_intent(wa_id, msg.LOCATION_REQUEST, "location_request")],
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "confirm_no",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         # Stale token, unknown reply, or free text while confirming: re-show the
         # confirmation for the currently staged location (no state change).
+        logger.warning(
+            "conversation_reprompted",
+            extra={"state": state, "reason": "stale_or_unrecognised_confirm"},
+        )
         lat = context["location"].get("lat")
         lon = context["location"].get("lon")
         address = context["location"].get("display_address") or (
@@ -329,17 +397,31 @@ def advance(
         if base == msg.ISSUE_DONE_ID:
             if not issue["messages"]:
                 # Done tapped with nothing captured — guard against empty tickets.
+                logger.warning(
+                    "conversation_rejected",
+                    extra={"state": state, "reason": "issue_empty"},
+                )
                 return FsmResult(
                     state=STATE_AWAITING_ISSUE,
                     context=context,
                     intents=[_text_intent(wa_id, msg.ISSUE_EMPTY, "issue_empty")],
                 )
             body = f"{msg.ISSUE_RECEIVED}\n\n{msg.PHOTO_PROMPT}"
-            return FsmResult(
+            result = FsmResult(
                 state=STATE_AWAITING_PHOTO,
                 context=context,
                 intents=[_photo_prompt_intent(wa_id, body, "photo_prompt")],
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "issue_done",
+                "message_count": len(issue["messages"]),
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         if inbound.message_type in ISSUE_CONTENT_TYPES:
             issue["messages"].append(
@@ -358,6 +440,10 @@ def advance(
             return FsmResult(state=STATE_AWAITING_ISSUE, context=context, intents=[])
 
         # Unrecognised input (e.g. a stale button) — ignore.
+        logger.warning(
+            "conversation_reprompted",
+            extra={"state": state, "reason": "unrecognised_input"},
+        )
         return FsmResult(state=STATE_AWAITING_ISSUE, context=context, intents=[])
 
     if state == STATE_AWAITING_PHOTO:
@@ -369,21 +455,39 @@ def advance(
                 "mime_type": inbound.media_mime_type,
                 "skipped": False,
             }
-            return FsmResult(
+            result = FsmResult(
                 state=STATE_PROCESSING,
                 context=context,
                 intents=[_text_intent(wa_id, msg.PROCESSING_WAIT, "processing_wait")],
                 action="start_pipeline",
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "photo_shared",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         if base == msg.PHOTO_SKIP_ID:
             context["photo"] = {"media_id": None, "mime_type": None, "skipped": True}
-            return FsmResult(
+            result = FsmResult(
                 state=STATE_PROCESSING,
                 context=context,
                 intents=[_text_intent(wa_id, msg.PROCESSING_WAIT, "processing_wait")],
                 action="start_pipeline",
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "photo_skipped",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         if base == msg.PHOTO_SHARE_ID:
             return FsmResult(
@@ -393,6 +497,10 @@ def advance(
             )
 
         # Anything else while waiting for a photo: re-show the photo choice.
+        logger.warning(
+            "conversation_reprompted",
+            extra={"state": state, "reason": "unexpected_input"},
+        )
         return FsmResult(
             state=STATE_AWAITING_PHOTO,
             context=context,
@@ -418,22 +526,45 @@ def advance(
                 "skipped": False,
             }
             context["draft"]["recheck_count"] = context["draft"].get("recheck_count", 0) + 1
-            return FsmResult(
+            result = FsmResult(
                 state=STATE_PROCESSING,
                 context=context,
                 intents=[_text_intent(wa_id, msg.PROCESSING_WAIT, "processing_wait")],
                 action="recheck_photo",
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "photo_resubmitted",
+                "attempt": context["draft"].get("recheck_count", 0),
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         if base == PHOTO_CONTINUE_ID:
-            return FsmResult(
+            result = FsmResult(
                 state=STATE_PROCESSING,
                 context=context,
                 intents=[_text_intent(wa_id, msg.PROCESSING_WAIT, "processing_wait")],
                 action="proceed_without_photo",
             )
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "photo_skipped",
+            }
+            if result.context.get("draft", {}).get("grievance_id"):
+                extra["grievance_id"] = str(result.context["draft"]["grievance_id"])
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         # Anything else: re-show the mismatch prompt (no state change).
+        logger.warning(
+            "conversation_reprompted",
+            extra={"state": state, "reason": "unexpected_input"},
+        )
         return FsmResult(
             state=STATE_PHOTO_MISMATCH, context=context, intents=[_mismatch_prompt_intent(wa_id)]
         )
@@ -443,13 +574,35 @@ def advance(
         draft_id = context["draft"].get("grievance_id")
 
         if token == draft_id and base == CONFIRM_GRV_YES_ID:
-            return FsmResult(state=STATE_DONE, context=context, action="finalize", close=True)
+            result = FsmResult(state=STATE_DONE, context=context, action="finalize", close=True)
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "confirm_yes",
+            }
+            if draft_id:
+                extra["grievance_id"] = str(draft_id)
+            logger.info("conversation_state_changed", extra=extra)
+            return result
         if token == draft_id and base == CONFIRM_GRV_NO_ID:
-            return FsmResult(state=STATE_DONE, context=context, action="cancel", close=True)
+            result = FsmResult(state=STATE_DONE, context=context, action="cancel", close=True)
+            extra = {
+                "from_state": state,
+                "to_state": result.state,
+                "trigger": "confirm_no",
+            }
+            if draft_id:
+                extra["grievance_id"] = str(draft_id)
+            logger.info("conversation_state_changed", extra=extra)
+            return result
 
         # Stale token or anything else: no re-prompt here (the confirm card,
         # including the PDF, was already sent by the pipeline follow-up and is
         # not reconstructible purely — the driver may resend it if needed).
+        logger.warning(
+            "conversation_reprompted",
+            extra={"state": state, "reason": "stale_confirmation_token"},
+        )
         return FsmResult(state=STATE_AWAITING_CONFIRMATION, context=context, intents=[])
 
     if state == STATE_DONE:
@@ -458,6 +611,10 @@ def advance(
         return FsmResult(state=STATE_DONE, context=context, intents=[])
 
     # Unknown state: do nothing rather than guess.
+    logger.warning(
+        "conversation_invalid_state",
+        extra={"state": state, "reason": "unknown_state"},
+    )
     return FsmResult(state=state, context=context, intents=[])
 
 

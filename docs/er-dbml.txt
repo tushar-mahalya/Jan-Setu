@@ -1,0 +1,583 @@
+-- DROP SCHEMA public;
+
+CREATE SCHEMA public AUTHORIZATION pg_database_owner;
+
+COMMENT ON SCHEMA public IS 'standard public schema';
+
+-- DROP SEQUENCE public.grievance_human_seq;
+
+CREATE SEQUENCE public.grievance_human_seq
+	INCREMENT BY 1
+	MINVALUE 1
+	MAXVALUE 9223372036854775807
+	START 1
+	CACHE 1
+	NO CYCLE;-- public.alembic_version definition
+
+-- Drop table
+
+-- DROP TABLE public.alembic_version;
+
+CREATE TABLE public.alembic_version (
+	version_num varchar(32) NOT NULL,
+	CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)
+);
+
+
+-- public.contacts definition
+
+-- Drop table
+
+-- DROP TABLE public.contacts;
+
+CREATE TABLE public.contacts (
+	id uuid NOT NULL,
+	wa_id varchar(32) NOT NULL,
+	profile_name varchar(255) NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_contacts PRIMARY KEY (id),
+	CONSTRAINT uq_contacts_wa_id UNIQUE (wa_id)
+);
+
+
+-- public.external_rate_limits definition
+
+-- Drop table
+
+-- DROP TABLE public.external_rate_limits;
+
+CREATE TABLE public.external_rate_limits (
+	provider varchar(64) NOT NULL,
+	next_allowed_at timestamptz NOT NULL,
+	CONSTRAINT pk_external_rate_limits PRIMARY KEY (provider)
+);
+
+
+-- public.geocode_cache definition
+
+-- Drop table
+
+-- DROP TABLE public.geocode_cache;
+
+CREATE TABLE public.geocode_cache (
+	provider varchar(32) NOT NULL,
+	lat_round float8 NOT NULL,
+	lon_round float8 NOT NULL,
+	accept_language varchar(32) NOT NULL,
+	status varchar(16) NOT NULL,
+	display_address text NULL,
+	address_components jsonb NULL,
+	raw jsonb NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_geocode_cache PRIMARY KEY (provider, lat_round, lon_round, accept_language)
+);
+
+
+-- public.jurisdictions definition
+
+-- Drop table
+
+-- DROP TABLE public.jurisdictions;
+
+CREATE TABLE public.jurisdictions (
+	id varchar(64) NOT NULL,
+	"name" varchar(255) NOT NULL,
+	taxonomy_version varchar(32) NOT NULL,
+	is_demo bool DEFAULT true NOT NULL,
+	active bool DEFAULT true NOT NULL,
+	geofence jsonb NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_jurisdictions PRIMARY KEY (id)
+);
+
+
+-- public.webhook_events definition
+
+-- Drop table
+
+-- DROP TABLE public.webhook_events;
+
+CREATE TABLE public.webhook_events (
+	id uuid NOT NULL,
+	"source" varchar(64) NOT NULL,
+	signature_valid bool NOT NULL,
+	payload jsonb NOT NULL,
+	created_at timestamptz NOT NULL,
+	processed_at timestamptz NULL,
+	attempt_count int4 NOT NULL,
+	locked_until timestamptz NULL,
+	CONSTRAINT pk_webhook_events PRIMARY KEY (id)
+);
+CREATE INDEX ix_webhook_events_created_at ON public.webhook_events USING btree (created_at);
+CREATE INDEX ix_webhook_events_source ON public.webhook_events USING btree (source);
+
+
+-- public.conversations definition
+
+-- Drop table
+
+-- DROP TABLE public.conversations;
+
+CREATE TABLE public.conversations (
+	id uuid NOT NULL,
+	contact_id uuid NOT NULL,
+	state varchar(32) NOT NULL,
+	context jsonb NOT NULL,
+	state_version int4 NOT NULL,
+	active bool NOT NULL,
+	last_user_message_at timestamptz NULL,
+	service_window_expires_at timestamptz NULL,
+	expires_at timestamptz NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_conversations PRIMARY KEY (id),
+	CONSTRAINT fk_conversations_contact_id_contacts FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_conversations_contact_id ON public.conversations USING btree (contact_id);
+CREATE UNIQUE INDEX uq_conversations_active_contact ON public.conversations USING btree (contact_id) WHERE active;
+
+
+-- public.fsm_message_consumptions definition
+
+-- Drop table
+
+-- DROP TABLE public.fsm_message_consumptions;
+
+CREATE TABLE public.fsm_message_consumptions (
+	id uuid NOT NULL,
+	inbound_message_id varchar(255) NOT NULL,
+	conversation_id uuid NULL,
+	state_before varchar(32) NULL,
+	state_after varchar(32) NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_fsm_message_consumptions PRIMARY KEY (id),
+	CONSTRAINT uq_fsm_message_consumptions_inbound_message_id UNIQUE (inbound_message_id),
+	CONSTRAINT fk_fsm_message_consumptions_conversation_id_conversations FOREIGN KEY (conversation_id) REFERENCES public.conversations(id) ON DELETE SET NULL
+);
+CREATE INDEX ix_fsm_message_consumptions_conversation_id ON public.fsm_message_consumptions USING btree (conversation_id);
+
+
+-- public.jurisdiction_routes definition
+
+-- Drop table
+
+-- DROP TABLE public.jurisdiction_routes;
+
+CREATE TABLE public.jurisdiction_routes (
+	id uuid NOT NULL,
+	jurisdiction_id varchar(64) NOT NULL,
+	taxonomy_version varchar(32) NOT NULL,
+	category_id varchar(96) NOT NULL,
+	department_key varchar(64) NOT NULL,
+	owning_agency varchar(255) NOT NULL,
+	dispatch_target jsonb NULL,
+	dispatch_enabled bool DEFAULT false NOT NULL,
+	sla_hours int4 NULL,
+	source_url text NULL,
+	reviewed_by varchar(255) NULL,
+	effective_from timestamptz NULL,
+	effective_to timestamptz NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_jurisdiction_routes PRIMARY KEY (id),
+	CONSTRAINT uq_jurisdiction_route_version_category UNIQUE (jurisdiction_id, taxonomy_version, category_id),
+	CONSTRAINT fk_jurisdiction_routes_jurisdiction_id_jurisdictions FOREIGN KEY (jurisdiction_id) REFERENCES public.jurisdictions(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_jurisdiction_routes_jurisdiction_id ON public.jurisdiction_routes USING btree (jurisdiction_id);
+
+
+-- public.official_users definition
+
+-- Drop table
+
+-- DROP TABLE public.official_users;
+
+CREATE TABLE public.official_users (
+	id uuid NOT NULL,
+	email varchar(320) NOT NULL,
+	"name" varchar(255) NOT NULL,
+	"role" varchar(32) NOT NULL,
+	jurisdiction_id varchar(64) NOT NULL,
+	department_keys jsonb DEFAULT '[]'::jsonb NOT NULL,
+	active bool DEFAULT true NOT NULL,
+	last_login_at timestamptz NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_official_users PRIMARY KEY (id),
+	CONSTRAINT uq_official_users_email UNIQUE (email),
+	CONSTRAINT fk_official_users_jurisdiction_id_jurisdictions FOREIGN KEY (jurisdiction_id) REFERENCES public.jurisdictions(id) ON DELETE RESTRICT
+);
+CREATE INDEX ix_official_users_jurisdiction_id ON public.official_users USING btree (jurisdiction_id);
+
+
+-- public.users definition
+
+-- Drop table
+
+-- DROP TABLE public.users;
+
+CREATE TABLE public.users (
+	id uuid NOT NULL,
+	phone varchar(32) NOT NULL,
+	contact_id uuid NULL,
+	"name" varchar(255) NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_users PRIMARY KEY (id),
+	CONSTRAINT uq_users_contact_id UNIQUE (contact_id),
+	CONSTRAINT uq_users_phone UNIQUE (phone),
+	CONSTRAINT fk_users_contact_id_contacts FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE SET NULL
+);
+
+
+-- public.whatsapp_messages definition
+
+-- Drop table
+
+-- DROP TABLE public.whatsapp_messages;
+
+CREATE TABLE public.whatsapp_messages (
+	id uuid NOT NULL,
+	contact_id uuid NULL,
+	meta_message_id varchar(255) NULL,
+	direction varchar(16) NOT NULL,
+	message_type varchar(64) NOT NULL,
+	text_body text NULL,
+	media_id varchar(255) NULL,
+	media_mime_type varchar(255) NULL,
+	location_latitude float8 NULL,
+	location_longitude float8 NULL,
+	location_name varchar(255) NULL,
+	location_address text NULL,
+	location_url text NULL,
+	raw_payload jsonb NOT NULL,
+	received_at timestamptz NOT NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	reply_id varchar(256) NULL,
+	interactive_type varchar(32) NULL,
+	button_payload text NULL,
+	context_message_id varchar(255) NULL,
+	status varchar(16) NOT NULL,
+	idempotency_key varchar(255) NULL,
+	reply_kind varchar(32) NULL,
+	conversation_id uuid NULL,
+	in_response_to_message_id varchar(255) NULL,
+	locked_until timestamptz NULL,
+	attempt_count int4 NOT NULL,
+	CONSTRAINT pk_whatsapp_messages PRIMARY KEY (id),
+	CONSTRAINT uq_whatsapp_messages_idempotency_key UNIQUE (idempotency_key),
+	CONSTRAINT uq_whatsapp_messages_meta_message_id UNIQUE (meta_message_id),
+	CONSTRAINT fk_whatsapp_messages_contact_id_contacts FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE SET NULL,
+	CONSTRAINT fk_whatsapp_messages_conversation_id_conversations FOREIGN KEY (conversation_id) REFERENCES public.conversations(id) ON DELETE SET NULL
+);
+CREATE INDEX ix_whatsapp_messages_contact_id ON public.whatsapp_messages USING btree (contact_id);
+CREATE INDEX ix_whatsapp_messages_conversation_id ON public.whatsapp_messages USING btree (conversation_id);
+CREATE INDEX ix_whatsapp_messages_received_at ON public.whatsapp_messages USING btree (received_at);
+
+
+-- public.grievances definition
+
+-- Drop table
+
+-- DROP TABLE public.grievances;
+
+CREATE TABLE public.grievances (
+	id uuid NOT NULL,
+	human_id varchar(32) NOT NULL,
+	contact_id uuid NOT NULL,
+	conversation_id uuid NULL,
+	location_latitude float8 NULL,
+	location_longitude float8 NULL,
+	location_address text NULL,
+	issue_text text NULL,
+	photo_media_id varchar(255) NULL,
+	status varchar(32) NOT NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	user_id uuid NULL,
+	"source" varchar(16) NOT NULL,
+	issue_messages jsonb NOT NULL,
+	source_language varchar(16) NULL,
+	photo_path text NULL,
+	audio_paths jsonb NOT NULL,
+	pdf_path text NULL,
+	category varchar(64) NULL,
+	department_key varchar(64) NULL,
+	priority varchar(16) NULL,
+	term varchar(16) NULL,
+	confidence float8 NULL,
+	image_match_status varchar(16) NULL,
+	flags jsonb NOT NULL,
+	report_count int4 NOT NULL,
+	duplicate_of_id uuid NULL,
+	window_expires_at timestamptz NULL,
+	dispatch_ref varchar(255) NULL,
+	dispatch_attempts int4 NOT NULL,
+	drafted_at timestamptz NULL,
+	confirmed_at timestamptz NULL,
+	taxonomy_version varchar(32) NULL,
+	category_id varchar(96) NULL,
+	aggregation_key varchar(96) NULL,
+	jurisdiction_id varchar(64) NULL,
+	safety_level varchar(16) NULL,
+	asset_scope varchar(16) NULL,
+	disposition varchar(40) NULL,
+	review_status varchar(32) NULL,
+	policy_version varchar(32) NULL,
+	routing_snapshot jsonb NULL,
+	structured_facts jsonb NULL,
+	transcript_metadata jsonb DEFAULT '[]'::jsonb NOT NULL,
+	state_version int4 DEFAULT 0 NOT NULL,
+	CONSTRAINT pk_grievances PRIMARY KEY (id),
+	CONSTRAINT uq_grievances_conversation_id UNIQUE (conversation_id),
+	CONSTRAINT uq_grievances_human_id UNIQUE (human_id),
+	CONSTRAINT fk_grievances_contact_id_contacts FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE CASCADE,
+	CONSTRAINT fk_grievances_conversation_id_conversations FOREIGN KEY (conversation_id) REFERENCES public.conversations(id) ON DELETE SET NULL,
+	CONSTRAINT fk_grievances_duplicate_of_id_grievances FOREIGN KEY (duplicate_of_id) REFERENCES public.grievances(id) ON DELETE SET NULL,
+	CONSTRAINT fk_grievances_user_id_users FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL
+);
+CREATE INDEX ix_grievances_aggregation_key ON public.grievances USING btree (aggregation_key);
+CREATE INDEX ix_grievances_category_id ON public.grievances USING btree (category_id);
+CREATE INDEX ix_grievances_category_window ON public.grievances USING btree (category, window_expires_at);
+CREATE INDEX ix_grievances_contact_id ON public.grievances USING btree (contact_id);
+CREATE INDEX ix_grievances_created_at ON public.grievances USING btree (created_at);
+CREATE INDEX ix_grievances_duplicate_of_id ON public.grievances USING btree (duplicate_of_id);
+CREATE INDEX ix_grievances_jurisdiction_id ON public.grievances USING btree (jurisdiction_id);
+CREATE INDEX ix_grievances_lat_lon ON public.grievances USING btree (location_latitude, location_longitude);
+CREATE INDEX ix_grievances_review_status ON public.grievances USING btree (review_status);
+CREATE INDEX ix_grievances_status ON public.grievances USING btree (status);
+CREATE INDEX ix_grievances_user_id ON public.grievances USING btree (user_id);
+
+
+-- public.login_approval_challenges definition
+
+-- Drop table
+
+-- DROP TABLE public.login_approval_challenges;
+
+CREATE TABLE public.login_approval_challenges (
+	id uuid NOT NULL,
+	user_id uuid NOT NULL,
+	contact_id uuid NOT NULL,
+	phone varchar(32) NOT NULL,
+	verifier_hash varchar(64) NOT NULL,
+	browser_nonce_hash varchar(64) NOT NULL,
+	browser_label varchar(128) NULL,
+	status varchar(24) NOT NULL,
+	requested_at timestamptz NOT NULL,
+	expires_at timestamptz NOT NULL,
+	decided_at timestamptz NULL,
+	consumed_at timestamptz NULL,
+	decision_message_id varchar(255) NULL,
+	approval_outbound_message_id uuid NULL,
+	request_ip_hash varchar(64) NULL,
+	CONSTRAINT pk_login_approval_challenges PRIMARY KEY (id),
+	CONSTRAINT uq_login_approval_challenges_decision_message_id UNIQUE (decision_message_id),
+	CONSTRAINT uq_login_approval_challenges_verifier_hash UNIQUE (verifier_hash),
+	CONSTRAINT fk_login_approval_challenges_approval_outbound_message__8379 FOREIGN KEY (approval_outbound_message_id) REFERENCES public.whatsapp_messages(id) ON DELETE SET NULL,
+	CONSTRAINT fk_login_approval_challenges_contact_id_contacts FOREIGN KEY (contact_id) REFERENCES public.contacts(id) ON DELETE CASCADE,
+	CONSTRAINT fk_login_approval_challenges_user_id_users FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_login_approval_challenges_approval_outbound_message_id ON public.login_approval_challenges USING btree (approval_outbound_message_id);
+CREATE INDEX ix_login_approval_challenges_contact_id ON public.login_approval_challenges USING btree (contact_id);
+CREATE INDEX ix_login_approval_challenges_expires_at ON public.login_approval_challenges USING btree (expires_at);
+CREATE INDEX ix_login_approval_challenges_status ON public.login_approval_challenges USING btree (status);
+CREATE INDEX ix_login_approval_challenges_user_id ON public.login_approval_challenges USING btree (user_id);
+CREATE INDEX ix_login_approval_user_status_requested ON public.login_approval_challenges USING btree (user_id, status, requested_at);
+
+
+-- public.official_audit_events definition
+
+-- Drop table
+
+-- DROP TABLE public.official_audit_events;
+
+CREATE TABLE public.official_audit_events (
+	id uuid NOT NULL,
+	official_user_id uuid NOT NULL,
+	grievance_id uuid NULL,
+	"action" varchar(64) NOT NULL,
+	reason text NULL,
+	"before" jsonb NULL,
+	"after" jsonb NULL,
+	request_id varchar(64) NULL,
+	ip_hash varchar(64) NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_official_audit_events PRIMARY KEY (id),
+	CONSTRAINT fk_official_audit_events_grievance_id_grievances FOREIGN KEY (grievance_id) REFERENCES public.grievances(id) ON DELETE SET NULL,
+	CONSTRAINT fk_official_audit_events_official_user_id_official_users FOREIGN KEY (official_user_id) REFERENCES public.official_users(id) ON DELETE RESTRICT
+);
+CREATE INDEX ix_official_audit_events_grievance_id ON public.official_audit_events USING btree (grievance_id);
+CREATE INDEX ix_official_audit_events_official_user_id ON public.official_audit_events USING btree (official_user_id);
+
+
+-- public.official_login_challenges definition
+
+-- Drop table
+
+-- DROP TABLE public.official_login_challenges;
+
+CREATE TABLE public.official_login_challenges (
+	id uuid NOT NULL,
+	official_user_id uuid NULL,
+	email_hash varchar(64) NOT NULL,
+	code_hash varchar(64) NOT NULL,
+	expires_at timestamptz NOT NULL,
+	consumed_at timestamptz NULL,
+	attempt_count int4 DEFAULT 0 NOT NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_official_login_challenges PRIMARY KEY (id),
+	CONSTRAINT fk_official_login_challenges_official_user_id_official_users FOREIGN KEY (official_user_id) REFERENCES public.official_users(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_official_login_challenges_email_hash ON public.official_login_challenges USING btree (email_hash);
+CREATE INDEX ix_official_login_challenges_official_user_id ON public.official_login_challenges USING btree (official_user_id);
+
+
+-- public.phone_verifications definition
+
+-- Drop table
+
+-- DROP TABLE public.phone_verifications;
+
+CREATE TABLE public.phone_verifications (
+	id uuid NOT NULL,
+	phone varchar(32) NOT NULL,
+	code_hash varchar(64) NOT NULL,
+	status varchar(16) NOT NULL,
+	expires_at timestamptz NOT NULL,
+	verified_at timestamptz NULL,
+	user_id uuid NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_phone_verifications PRIMARY KEY (id),
+	CONSTRAINT fk_phone_verifications_user_id_users FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL
+);
+CREATE INDEX ix_phone_verifications_code_hash ON public.phone_verifications USING btree (code_hash);
+CREATE INDEX ix_phone_verifications_phone_created_at ON public.phone_verifications USING btree (phone, created_at);
+
+
+-- public.pipeline_jobs definition
+
+-- Drop table
+
+-- DROP TABLE public.pipeline_jobs;
+
+CREATE TABLE public.pipeline_jobs (
+	id uuid NOT NULL,
+	grievance_id uuid NOT NULL,
+	stage varchar(32) NOT NULL,
+	status varchar(16) NOT NULL,
+	idempotency_key varchar(255) NOT NULL,
+	attempt_count int4 DEFAULT 0 NOT NULL,
+	max_attempts int4 DEFAULT 5 NOT NULL,
+	next_attempt_at timestamptz NOT NULL,
+	locked_until timestamptz NULL,
+	last_error text NULL,
+	payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_pipeline_jobs PRIMARY KEY (id),
+	CONSTRAINT uq_pipeline_jobs_idempotency_key UNIQUE (idempotency_key),
+	CONSTRAINT fk_pipeline_jobs_grievance_id_grievances FOREIGN KEY (grievance_id) REFERENCES public.grievances(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_pipeline_jobs_grievance_id ON public.pipeline_jobs USING btree (grievance_id);
+CREATE INDEX ix_pipeline_jobs_status ON public.pipeline_jobs USING btree (status);
+
+
+-- public.refresh_tokens definition
+
+-- Drop table
+
+-- DROP TABLE public.refresh_tokens;
+
+CREATE TABLE public.refresh_tokens (
+	id uuid NOT NULL,
+	user_id uuid NOT NULL,
+	token_hash varchar(64) NOT NULL,
+	expires_at timestamptz NOT NULL,
+	revoked_at timestamptz NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_refresh_tokens PRIMARY KEY (id),
+	CONSTRAINT uq_refresh_tokens_token_hash UNIQUE (token_hash),
+	CONSTRAINT fk_refresh_tokens_user_id_users FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_refresh_tokens_user_id ON public.refresh_tokens USING btree (user_id);
+
+
+-- public.dispatch_outbox definition
+
+-- Drop table
+
+-- DROP TABLE public.dispatch_outbox;
+
+CREATE TABLE public.dispatch_outbox (
+	id uuid NOT NULL,
+	grievance_id uuid NOT NULL,
+	idempotency_key varchar(255) NOT NULL,
+	status varchar(16) NOT NULL,
+	routing_snapshot jsonb NOT NULL,
+	attempt_count int4 DEFAULT 0 NOT NULL,
+	next_attempt_at timestamptz NOT NULL,
+	locked_until timestamptz NULL,
+	provider_ref varchar(255) NULL,
+	last_error text NULL,
+	created_at timestamptz NOT NULL,
+	updated_at timestamptz NOT NULL,
+	CONSTRAINT pk_dispatch_outbox PRIMARY KEY (id),
+	CONSTRAINT uq_dispatch_outbox_idempotency_key UNIQUE (idempotency_key),
+	CONSTRAINT fk_dispatch_outbox_grievance_id_grievances FOREIGN KEY (grievance_id) REFERENCES public.grievances(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_dispatch_outbox_grievance_id ON public.dispatch_outbox USING btree (grievance_id);
+CREATE INDEX ix_dispatch_outbox_status ON public.dispatch_outbox USING btree (status);
+
+
+-- public.grievance_events definition
+
+-- Drop table
+
+-- DROP TABLE public.grievance_events;
+
+CREATE TABLE public.grievance_events (
+	id uuid NOT NULL,
+	grievance_id uuid NOT NULL,
+	status varchar(32) NOT NULL,
+	note text NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_grievance_events PRIMARY KEY (id),
+	CONSTRAINT fk_grievance_events_grievance_id_grievances FOREIGN KEY (grievance_id) REFERENCES public.grievances(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_grievance_events_grievance_id ON public.grievance_events USING btree (grievance_id);
+
+
+-- public.grievance_extractions definition
+
+-- Drop table
+
+-- DROP TABLE public.grievance_extractions;
+
+CREATE TABLE public.grievance_extractions (
+	id uuid NOT NULL,
+	grievance_id uuid NOT NULL,
+	extraction_version varchar(32) NOT NULL,
+	taxonomy_version varchar(32) NOT NULL,
+	prompt_version varchar(32) NOT NULL,
+	provider varchar(32) NOT NULL,
+	requested_models jsonb DEFAULT '[]'::jsonb NOT NULL,
+	actual_model varchar(255) NULL,
+	status varchar(32) NOT NULL,
+	latency_ms int4 NULL,
+	raw_response jsonb NULL,
+	normalized_result jsonb NULL,
+	confidence float8 NULL,
+	needs_review bool DEFAULT true NOT NULL,
+	degradation_reason varchar(128) NULL,
+	accepted_at timestamptz NULL,
+	accepted_by_type varchar(32) NULL,
+	accepted_by_id varchar(64) NULL,
+	created_at timestamptz NOT NULL,
+	CONSTRAINT pk_grievance_extractions PRIMARY KEY (id),
+	CONSTRAINT fk_grievance_extractions_grievance_id_grievances FOREIGN KEY (grievance_id) REFERENCES public.grievances(id) ON DELETE CASCADE
+);
+CREATE INDEX ix_grievance_extractions_grievance_id ON public.grievance_extractions USING btree (grievance_id);

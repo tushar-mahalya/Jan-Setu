@@ -7,6 +7,7 @@ Re-exported here so callers use ``from jan_setu.pipeline import X``.
 from jan_setu.pipeline.core import (
     FinalizeOutcome,
     PipelineResult,
+    accept_photo_mismatch,
     cancel_grievance,
     dispatch_grievance,
     finalize_grievance,
@@ -21,6 +22,7 @@ from jan_setu.pipeline.core import (
 __all__ = [
     "FinalizeOutcome",
     "PipelineResult",
+    "accept_photo_mismatch",
     "cancel_grievance",
     "dispatch_grievance",
     "finalize_grievance",

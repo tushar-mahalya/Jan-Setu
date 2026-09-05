@@ -99,6 +99,8 @@ def test_whatsapp_client_uses_injected_http_client(monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "phone-number-id")
 
     class Response:
+        status_code = 200
+
         def raise_for_status(self):
             return None
 

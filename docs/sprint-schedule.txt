@@ -1,0 +1,61 @@
+3.1 How We Work: Agile Framework & Team Rhythm
+
+To keep our momentum steady and stay aligned across design, frontend, backend, and QA, we work in 2-week sprint cycles (condensed to 10-day sprints during build-heavy phases). Here is our regular routine:
+
+Sprint Planning: On the first day of every sprint, we review our backlog, set our primary goal, estimate effort in Jira, and assign task ownership.
+Standups / Sync Meetings: Every Monday, Wednesday, and Friday, we meet briefly to share progress, clear blockers, and keep our Kanban board up to date.
+Sprint Review & Client Demo: In client meetings we demo working features to our stakeholders (Balasurya K & Sonika Pal) to gather early, actionable feedback.
+Sprint Retrospective: Right after the demo, we reflect on how we worked together, pinpoint bottlenecks, and tweak our processes for the sprint submission and for next cycles.
+
+
+3.2 Sprint Schedule & Roadmap (Sprint 1 – Sprint 5)
+
+| Sprint & Milestone | Date Range | Sprint Goal | Modules & Focus Areas | Team Ownership | Key Deliverables & Outputs |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Milestone 1 | 12 June – 28 June 2026 | Uncovering user needs, selecting our domain & gathering requirements | Stakeholder mapping, discovering pain points, writing SMART user stories | • All Members: Draft questionnaire, run interviews, log proof. <br>• Amit & Tushar: Define problem domain & user roles. <br>• Veer, Parkhi, Sarthak: Write initial SMART stories. | • M1 PDF Report <br>• Audio/Video interview recordings <br>• User profiles (Primary, Secondary, Tertiary) <br>• SMART User Stories |
+| Milestone 2 | 29 June – 23 July 2026 | Designing architecture, UI/UX prototyping & plotting project schedule | Component design, database schema, class diagrams, frontend UI mockups | • Veer: Frontend wireframes & core pages (Landing, Login). <br>• Parkhi: Dashboard & complaint filing flow. <br>• Tushar: ER diagram, DB schema, SRS document. <br>• Sarthak: Software Test Plan (STP), Gantt/Kanban setup. <br>• Amit: PRD, SAD lead, Scrum notes. | • Milestone 2 PDF Report <br>• Frontend HTML/CSS/JS ZIP + README <br>• Database Schema & Class Diagram <br>• Gantt Chart & Kanban screenshots <br>• team-050-milestone-1-2.zip |
+| (Milestone 3 / Sprint 1) | 24 July – 02 August 2026 | Building core APIs, OpenAPI specs & setting up Pytest | User authentication, complaint filing, role-based access control APIs | • Tushar: Core REST API endpoints (Flask) & DB ORM. <br>• Amit: Swagger-compatible YAML spec & story mapping. <br>• Sarthak: Pytest unit test suite & test runner setup. <br>• Veer & Parkhi: Prep frontend for API integration. | • Swagger/OpenAPI YAML file <br>• Functional Backend REST API code <br>• Automated Pytest suite & test reports <br>• User feedback log & Sprint 4 plan |
+| (Milestone 4 / Sprint 2) | 03 August – 12 August 2026 | Plugging in GenAI, advanced workflows & full-stack integration | AI complaint triage/summaries, workflow tracking, frontend-backend hookup | • Parkhi & Amit: GenAI / LLM API integration (OpenAI / Gemini / LangChain) for auto-tagging. <br>• Veer & Parkhi: Wire up Vue.js/JS frontend to backend. <br>• Tushar: Complex queries & notification APIs. <br>• Sarthak: End-to-end API test suite & edge-case checks. | • Working GenAI API pipeline <br>• Connected full-stack prototype <br>• Expanded Pytest test suite & results <br>• End-user feedback & validation report |
+| (Milestone 5 / Final Submission) | 13 August – 23 August 2026 | System testing, issue tracking, video demo & packaging | End-to-end verification, bug squashing, documentation & presentation | • Sarthak: Pre-commit hooks, CI/CD pipeline check & code audit. <br>• Amit & Tushar: Issue tracking docs & GitHub PR review summaries. <br>• Veer & Parkhi: Demo video, slides & setup guides. <br>• All Members: Compile final PDF report & package project. | • Complete application source code ZIP <br>• Final consolidated PDF report <br>• Video demo & presentation deck <br>• Setup README (Ubuntu/Mac/Win) <br>• team-050-milestone-3-5.zip |
+
+
+3.3 Detailed Sprint Breakdown
+
+Sprint 1 (12 June – 28 June 2026): Requirement Analysis & User Discovery
+Focus: Nailing down our problem statement, talking to users, and writing user stories.
+Key Tasks:
+• Defined our user roles: Citizens (Primary), Local Authorities/Admins (Secondary), and System Auditors (Tertiary).
+• Conducted user research interviews (logging audio/video recordings) to understand genuine day-to-day problems rather than forcing pre-planned features.
+• Translated user feedback into SMART (Specific, Measurable, Achievable, Relevant, Time-bound) user stories.
+
+Sprint 2 (29 June – 23 July 2026): System Architecture, Design & UI Prototyping
+Focus: Mapping out system components, building responsive web pages, designing the database, and setting project timelines.
+Key Tasks:
+• Created UI wireframes and functional pages (Landing Page, Login/Signup, User Dashboard, and Complaint Registration Flow).
+• Designed our relational Database Schema (ER Diagram) and UML Class Diagrams.
+• Drafted foundational documentation: Software Requirements Specification (SRS), Architecture Document (SAD), and Software Test Plan (STP).
+• Bundled all initial deliverables into team-050-milestone-1-2.zip following course validity guidelines.
+
+Sprint 3 / Milestone 3 (24 July – 02 August 2026): Core API Development & Testing
+Focus: Building scalable backend endpoints, generating OpenAPI documentation, and writing unit tests.
+Key Tasks:
+• Built foundational REST API endpoints using Flask for User Authentication, Profile Management, and Complaint Submissions.
+• Wrote a Swagger-compatible YAML specification detailing request/response models, status codes, and user story links.
+• Set up an automated test suite with Pytest to validate business logic and handle error paths cleanly.
+• Ran early user testing sessions to get initial feedback on core workflows.
+
+Sprint 4 / Milestone 4 (03 August – 12 August 2026): GenAI Pipeline & Full-Stack Integration
+Focus: Connecting GenAI for smart complaint routing, wiring the frontend to backend APIs, and executing full integration tests.
+Key Tasks:
+• Integrated LLM APIs (OpenAI / Gemini / LangChain) to automatically summarize complaints and tag the appropriate departments.
+• Hooked up our Vue.js/JavaScript frontend components directly to backend REST endpoints.
+• Expanded our test coverage to catch third-party API errors and unusual user input edge cases.
+• Collected structured user feedback to fix navigation flow and improve UI responsiveness.
+
+Sprint 5 / Milestone 5 (13 August – 23 August 2026): Code Review, Issue Tracking & Final Showcase
+Focus: Cleaning up code, documenting issue tracking, recording the demo, and packaging final deliverables.
+Key Tasks:
+• Documented our GitHub issue history, PR reviews, and bug resolution logs with screenshots.
+• Wrote clear, step-by-step setup guides (README.md) for Windows, macOS, and Ubuntu environments.
+• Recorded a walk-through video showcasing the complete end-to-end working app.
+• Compiled the final PDF report and verified team-050-milestone-3-5.zip using the course Validity Tool.

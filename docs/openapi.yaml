@@ -1,0 +1,2573 @@
+openapi: 3.1.0
+info:
+  title: Jan Setu API
+  version: 0.2.0
+  description: 'Jan Setu is a civic complaint platform: citizens file complaints over a React web portal
+    or a WhatsApp bot, both backed by this shared FastAPI service. This spec is generated directly from
+    the live FastAPI route definitions (`app.openapi()`), then annotated with the user story each operation
+    implements (`x-user-stories`, referencing the JAN-SETU smart user stories US-01..US-10) and with the
+    non-2xx responses each handler actually raises.
+
+
+    Two authentication schemes are in play:
+
+    - **Citizen bearer token** (`Authorization: Bearer <access_token>`) issued by `/auth/*`, required
+    by every `/api/grievances/*` route.
+
+    - **Official bearer token** (`Authorization: Bearer <access_token>`) issued by `/api/official/auth/verify`,
+    required by every other `/api/official/*` route and audience-scoped separately from citizen tokens.
+
+    - **X-API-Key header**, required by the internal `/v1/contacts` and `/v1/messages*` routes.
+
+
+    All endpoints also return `422` with FastAPI''s standard validation-error body on malformed request
+    bodies/query params; that response is omitted per-operation below to avoid repeating it, but applies
+    everywhere a request body or typed query parameter is present.'
+paths:
+  /health:
+    get:
+      tags:
+      - health
+      - internal
+      summary: Health
+      operationId: health_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Health Health Get
+      description: Liveness probe. Returns 200 if the process is running; does not touch the database.
+  /ready:
+    get:
+      tags:
+      - health
+      - internal
+      summary: Ready
+      operationId: ready_ready_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Ready Ready Get
+      description: Readiness probe. Runs `SELECT 1` against PostgreSQL and returns 200 only if it succeeds.
+  /v1/contacts:
+    get:
+      tags:
+      - contacts
+      - internal
+      summary: Get Contacts
+      operationId: get_contacts_v1_contacts_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: x-api-key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContactRead'
+                title: Response Get Contacts V1 Contacts Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid X-API-Key header.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: API_KEY is not configured outside development.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      security:
+      - apiKeyAuth: []
+      description: Lists stored WhatsApp contacts for internal debugging/ops. Requires the X-API-Key header.
+  /v1/messages:
+    get:
+      tags:
+      - messages
+      - internal
+      summary: Get Messages
+      operationId: get_messages_v1_messages_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: wa_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Wa Id
+      - name: x-api-key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MessageRead'
+                title: Response Get Messages V1 Messages Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid X-API-Key header.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: API_KEY is not configured outside development.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      security:
+      - apiKeyAuth: []
+      description: Lists stored inbound/outbound WhatsApp messages, optionally filtered by wa_id. Requires
+        the X-API-Key header.
+  /v1/messages/text:
+    post:
+      tags:
+      - messages
+      - internal
+      summary: Send Text Message
+      operationId: send_text_message_v1_messages_text_post
+      parameters:
+      - name: x-api-key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendTextRequest'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendTextResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid X-API-Key header.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: API_KEY not configured outside development, or the WhatsApp client is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: WhatsApp Cloud API returned an error status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      security:
+      - apiKeyAuth: []
+      description: Sends a free-form WhatsApp text message via the Cloud API and stores the outbound record.
+        Requires the X-API-Key header; only deliverable inside Meta's 24-hour customer-service window
+        unless a template is used.
+  /whatsapp/webhook:
+    get:
+      tags:
+      - whatsapp
+      summary: Verify Webhook
+      operationId: verify_webhook_whatsapp_webhook_get
+      parameters:
+      - name: hub.mode
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Hub.Mode
+      - name: hub.verify_token
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Hub.Verify Token
+      - name: hub.challenge
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Hub.Challenge
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '403':
+          description: hub.verify_token does not match the configured value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-01
+      - US-02
+      - US-03
+      - US-09
+      - US-10
+      description: 'Meta''s webhook subscription handshake: echoes back hub.challenge if hub.verify_token
+        matches the configured WHATSAPP_VERIFY_TOKEN.'
+    post:
+      tags:
+      - whatsapp
+      summary: Receive Webhook
+      operationId: receive_webhook_whatsapp_webhook_post
+      parameters:
+      - name: x-hub-signature-256
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Hub-Signature-256
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Receive Webhook Whatsapp Webhook Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: X-Hub-Signature-256 does not match the HMAC of the raw body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Body is not valid JSON or is not a JSON object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: WHATSAPP_APP_SECRET is not configured outside development.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-01
+      - US-02
+      - US-03
+      - US-09
+      - US-10
+      security:
+      - metaWebhookSignature: []
+      description: Entry point for all inbound WhatsApp traffic. Verifies the X-Hub-Signature-256 HMAC,
+        persists the raw event, and hands processing to a background task so a slow or failing pipeline
+        never blocks Meta's delivery or triggers a retry.
+  /auth/request-code:
+    post:
+      tags:
+      - auth
+      summary: Request Code
+      operationId: request_code_auth_request_code_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCodeRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestCodeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '429':
+          description: Too many verification/approval requests for this phone number in the last hour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-01
+      description: Starts citizen sign-in. If the phone messaged the bot within the current service window,
+        sends a one-tap WhatsApp approval instead of a reverse code; otherwise returns a code for the
+        citizen to send to the bot. Rate-limited to `verification_max_per_hour` combined attempts per
+        phone.
+  /auth/status:
+    get:
+      tags:
+      - auth
+      summary: Auth Status
+      operationId: auth_status_auth_status_get
+      parameters:
+      - name: verification_id
+        in: query
+        required: true
+        schema:
+          type: string
+          title: Verification Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '404':
+          description: Unknown verification_id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-01
+      description: Polled by the web app while a reverse-code sign-in is pending. Issues an access token
+        and sets the refresh-token cookie exactly once, on the first poll after the code is verified.
+  /auth/approval-status:
+    post:
+      tags:
+      - auth
+      summary: Approval Status
+      operationId: approval_status_auth_approval_status_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalStatusRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-user-stories:
+      - US-01
+      description: Polled equivalent of /auth/status for the WhatsApp one-tap approval flow; matches the
+        challenge by id and the browser's nonce.
+  /auth/refresh:
+    post:
+      tags:
+      - auth
+      summary: Refresh
+      operationId: refresh_auth_refresh_post
+      parameters:
+      - name: Cookie
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cookie
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid/expired/revoked refresh token cookie.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-01
+      description: Rotates the httpOnly refresh_token cookie and issues a new access token. The old refresh
+        token is revoked even when the call fails.
+  /auth/logout:
+    post:
+      tags:
+      - auth
+      summary: Logout
+      operationId: logout_auth_logout_post
+      parameters:
+      - name: Cookie
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Cookie
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+                title: Response Logout Auth Logout Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-user-stories:
+      - US-01
+      description: Revokes the current refresh token, if any, and clears the cookie. Always returns 200.
+  /api/grievances/transcription-preview:
+    post:
+      tags:
+      - grievances
+      summary: Preview Transcription
+      operationId: preview_transcription_api_grievances_transcription_preview_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_preview_transcription_api_grievances_transcription_preview_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionPreview'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Audio exceeds the configured size limit or has a disallowed MIME type.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-02
+      security:
+      - citizenBearerAuth: []
+      description: Transcribes a standalone audio clip via Sarvam STT without creating or attaching it
+        to a grievance, so the filing wizard can preview text before the citizen commits to it.
+  /api/grievances/draft:
+    post:
+      tags:
+      - grievances
+      summary: Create Draft
+      operationId: create_draft_api_grievances_draft_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_create_draft_api_grievances_draft_post'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrievanceDraftResponse'
+        '422':
+          description: Voice note metadata is missing, malformed, or does not match the number of uploaded
+            clips.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Account has no verified WhatsApp contact, an upload is invalid, or neither text
+            nor voice notes were provided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-02
+      - US-03
+      - US-10
+      security:
+      - citizenBearerAuth: []
+      description: Creates a grievance from the web filing wizard (location, optional text/voice description,
+        optional photo). Persists uploads, marks the grievance 'processing', and enqueues the async classification/geocoding/image-check
+        pipeline job.
+  /api/grievances/{grievance_id}/draft:
+    get:
+      tags:
+      - grievances
+      summary: Get Draft
+      operationId: get_draft_api_grievances__grievance_id__draft_get
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrievanceDraftResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-03
+      - US-10
+      security:
+      - citizenBearerAuth: []
+      description: Fetches the current state of a grievance draft (classification, routing, flags) while
+        the async pipeline is running or after it finishes, for the citizen review screen.
+  /api/grievances/{grievance_id}/review:
+    patch:
+      tags:
+      - grievances
+      summary: Update Review
+      operationId: update_review_api_grievances__grievance_id__review_patch
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrievanceReviewPatch'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrievanceDraftResponse'
+        '422':
+          description: Unknown civic category or invalid asset scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-03
+      - US-05
+      - US-10
+      security:
+      - citizenBearerAuth: []
+      description: Lets the citizen correct the AI-suggested category or asset scope, or answer a clarification
+        question, before confirming. Submitting a correction or clarification re-queues a stronger re-extraction
+        pass in the background.
+  /api/grievances/{grievance_id}/photo:
+    patch:
+      tags:
+      - grievances
+      summary: Replace Photo
+      operationId: replace_photo_api_grievances__grievance_id__photo_patch
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_replace_photo_api_grievances__grievance_id__photo_patch'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrievanceDraftResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Photo exceeds the configured size limit or has a disallowed MIME type.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '502':
+          description: Downstream image-consistency re-check failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-04
+      security:
+      - citizenBearerAuth: []
+      description: Replaces the attached evidence photo and synchronously re-runs the image-vs-description
+        consistency check before returning.
+  /api/grievances/{grievance_id}/confirm:
+    post:
+      tags:
+      - grievances
+      summary: Confirm Draft
+      operationId: confirm_draft_api_grievances__grievance_id__confirm_post
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrievanceConfirmResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '400':
+          description: Grievance is not currently awaiting_confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-06
+      - US-07
+      - US-10
+      security:
+      - citizenBearerAuth: []
+      description: 'Finalizes a grievance that is awaiting_confirmation: routes it into the aggregation
+        window (non-priority categories), straight to dispatch (priority categories), or straight to
+        official review (redirect/needs-review dispositions) per the taxonomy routing policy. If a
+        duplicate is found within the dedup radius/category during this step, the new grievance is
+        merged into the existing one instead (`status: duplicate`, `duplicate_of_human_id` and the
+        master''s updated `report_count` are returned) so the department gets one consolidated report
+        per issue.'
+  /api/grievances:
+    get:
+      tags:
+      - grievances
+      summary: List My Grievances
+      operationId: list_my_grievances_api_grievances_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GrievanceSummary'
+                title: Response List My Grievances Api Grievances Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-08
+      security:
+      - citizenBearerAuth: []
+      description: Lists the caller's own grievances, most recent first, paginated.
+  /api/grievances/{grievance_id}:
+    get:
+      tags:
+      - grievances
+      summary: Get Grievance Detail
+      operationId: get_grievance_detail_api_grievances__grievance_id__get
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrievanceDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance does not exist or is not owned by the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-08
+      security:
+      - citizenBearerAuth: []
+      description: Full detail of one grievance, including its status-change event timeline, for the citizen
+        tracking screen.
+  /api/grievances/{grievance_id}/audio/{message_index}:
+    get:
+      tags:
+      - grievances
+      summary: Stream Voice Note
+      operationId: stream_voice_note_api_grievances__grievance_id__audio__message_index__get
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      - name: message_index
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Message Index
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance not owned by caller, index out of range, or the audio file is unavailable
+            on disk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-02
+      - US-08
+      security:
+      - citizenBearerAuth: []
+      description: Streams one recorded voice-note clip belonging to a grievance, addressed by its index
+        in issue_messages.
+  /api/grievances/{grievance_id}/pdf:
+    get:
+      tags:
+      - grievances
+      summary: Download Pdf
+      operationId: download_pdf_api_grievances__grievance_id__pdf_get
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing or invalid access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance not owned by caller, no PDF generated yet, or the file is unavailable
+            on disk.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-08
+      security:
+      - citizenBearerAuth: []
+      description: Downloads the generated Unicode complaint-summary PDF, once the pipeline has produced
+        one.
+  /api/official/auth/request-code:
+    post:
+      tags:
+      - official operations
+      summary: Request Official Code
+      operationId: request_official_code_api_official_auth_request_code_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfficialCodeRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialCodeRequested'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-user-stories:
+      - US-04
+      - US-05
+      - US-06
+      - US-07
+      description: Starts official sign-in. Always returns 200 with a generic body regardless of whether
+        the email is registered, to prevent account enumeration; the OTP is only emailed when the account
+        exists.
+  /api/official/auth/verify:
+    post:
+      tags:
+      - official operations
+      summary: Verify Official Code
+      operationId: verify_official_code_api_official_auth_verify_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfficialCodeVerify'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialSession'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Challenge unknown, expired, already consumed, over 5 attempts, or code mismatch.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-04
+      - US-05
+      - US-06
+      - US-07
+      description: Verifies the emailed OTP and issues a role- and jurisdiction-scoped official access
+        token. The challenge is locked out after 5 failed attempts.
+  /api/official/queue:
+    get:
+      tags:
+      - official operations
+      summary: Official Queue
+      operationId: official_queue_api_official_queue_get
+      parameters:
+      - name: review_status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Review Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QueueItem'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing/invalid official access token, or the official account is inactive/unknown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-04
+      - US-05
+      - US-06
+      - US-07
+      security:
+      - officialBearerAuth: []
+      description: Department/jurisdiction-scoped list of grievances visible to the calling official,
+        optionally filtered by review_status.
+  /api/official/grievances/{grievance_id}:
+    get:
+      tags:
+      - official operations
+      summary: Official Grievance
+      operationId: official_grievance_api_official_grievances__grievance_id__get
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueItem'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+        '401':
+          description: Missing/invalid official access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance does not exist or is outside the official's jurisdiction/department scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-04
+      - US-05
+      - US-06
+      - US-07
+      security:
+      - officialBearerAuth: []
+      description: Full detail of one grievance, scoped to the official's jurisdiction/department access.
+        Also records a 'view' audit entry.
+  /api/official/grievances/{grievance_id}/photo:
+    get:
+      tags:
+      - official operations
+      summary: Official Grievance Photo
+      description: 'Citizen evidence photo for the reviewing official. Scoped by the same
+
+        jurisdiction check as the case itself, and recorded as an evidence view --
+
+        the login copy promises that evidence access is audited.'
+      operationId: official_grievance_photo_api_official_grievances__grievance_id__photo_get
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/official/grievances/{grievance_id}/actions:
+    post:
+      tags:
+      - official operations
+      summary: Official Action
+      operationId: official_action_api_official_grievances__grievance_id__actions_post
+      parameters:
+      - name: grievance_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Grievance Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OfficialAction'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueItem'
+        '422':
+          description: category_id does not resolve to a known civic category.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '401':
+          description: Missing/invalid official access token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '403':
+          description: Auditors cannot modify complaints.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+        '404':
+          description: Grievance does not exist or is outside the official's jurisdiction/department scope.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-03
+      - US-04
+      - US-05
+      - US-06
+      - US-07
+      security:
+      - officialBearerAuth: []
+      description: Approves, corrects, redirects, rejects, or requests clarification on a grievance. Auditors
+        are read-only and receive 403. Every action is written to the audit trail with a before/after
+        snapshot.
+  /api/official/metrics:
+    get:
+      tags:
+      - official operations
+      summary: Official Metrics
+      operationId: official_metrics_api_official_metrics_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OfficialMetrics'
+        '401':
+          description: Missing/invalid official access token, or the official account is inactive/unknown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorDetail'
+      x-user-stories:
+      - US-04
+      - US-05
+      - US-06
+      - US-07
+      security:
+      - officialBearerAuth: []
+      description: Aggregate queue counters (visible, pending review, immediate safety, AI-classification
+        failures, dispatch failures) for the official's dashboard.
+  /mock/municipal/{department_key}/complaints:
+    post:
+      summary: Submit Mock Complaint
+      operationId: submit_mock_complaint_mock_municipal__department_key__complaints_post
+      parameters:
+      - name: department_key
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Department Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MockComplaintRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockComplaintResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      tags:
+      - internal
+      description: Stand-in municipal department API for demoing the dispatch flow end-to-end without
+        a real per-department integration. Accepts any payload and returns a fake reference id.
+components:
+  schemas:
+    ApprovalStatusRequest:
+      properties:
+        verification_id:
+          type: string
+          format: uuid
+          title: Verification Id
+        browser_nonce:
+          type: string
+          maxLength: 256
+          minLength: 32
+          title: Browser Nonce
+      type: object
+      required:
+      - verification_id
+      - browser_nonce
+      title: ApprovalStatusRequest
+    AuthStatusResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        access_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Access Token
+      type: object
+      required:
+      - status
+      title: AuthStatusResponse
+    Body_create_draft_api_grievances_draft_post:
+      properties:
+        lat:
+          type: number
+          title: Lat
+        lon:
+          type: number
+          title: Lon
+        text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Text
+        landmark:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Landmark
+        photo:
+          anyOf:
+          - type: string
+            contentMediaType: application/octet-stream
+          - type: 'null'
+          title: Photo
+        audio:
+          anyOf:
+          - items:
+              type: string
+              contentMediaType: application/octet-stream
+            type: array
+          - type: 'null'
+          title: Audio
+        audio_metadata:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Audio Metadata
+      type: object
+      required:
+      - lat
+      - lon
+      title: Body_create_draft_api_grievances_draft_post
+    Body_preview_transcription_api_grievances_transcription_preview_post:
+      properties:
+        audio:
+          type: string
+          contentMediaType: application/octet-stream
+          title: Audio
+      type: object
+      required:
+      - audio
+      title: Body_preview_transcription_api_grievances_transcription_preview_post
+    Body_replace_photo_api_grievances__grievance_id__photo_patch:
+      properties:
+        photo:
+          type: string
+          contentMediaType: application/octet-stream
+          title: Photo
+      type: object
+      required:
+      - photo
+      title: Body_replace_photo_api_grievances__grievance_id__photo_patch
+    ContactRead:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        wa_id:
+          type: string
+          title: Wa Id
+        profile_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Profile Name
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - wa_id
+      - profile_name
+      - created_at
+      - updated_at
+      title: ContactRead
+    GrievanceConfirmResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+          description: 'One of: registered (routed to official review or dispatched),
+            duplicate (merged into an existing report), pending_window (holding in
+            the aggregation window).'
+        human_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Human Id
+        duplicate_of_human_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Duplicate Of Human Id
+          description: Set only when status is duplicate; the human_id of the master
+            grievance this one was merged into.
+        report_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Report Count
+          description: Set only when status is duplicate; the master grievance's
+            updated count of citizens reporting the same issue.
+      type: object
+      required:
+      - status
+      - human_id
+      - duplicate_of_human_id
+      - report_count
+      title: GrievanceConfirmResponse
+    GrievanceDetail:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        human_id:
+          type: string
+          title: Human Id
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        status:
+          type: string
+          title: Status
+        priority:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Priority
+        source:
+          type: string
+          title: Source
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        address:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Address
+        issue_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Issue Text
+        department_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Department Key
+        department_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Department Name
+        term:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Term
+        confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Confidence
+        image_match_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Match Status
+        flags:
+          items: {}
+          type: array
+          title: Flags
+        report_count:
+          type: integer
+          title: Report Count
+        dispatch_ref:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Dispatch Ref
+        events:
+          items:
+            $ref: '#/components/schemas/GrievanceEventRead'
+          type: array
+          title: Events
+        pdf_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Pdf Url
+        category_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Id
+        category_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Label
+        domain_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Domain Label
+        safety_level:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Safety Level
+        asset_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asset Scope
+        disposition:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Disposition
+        review_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Review Status
+        source_language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Language
+        transcript_metadata:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Transcript Metadata
+        structured_facts:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Structured Facts
+        routing:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Routing
+      type: object
+      required:
+      - id
+      - human_id
+      - category
+      - status
+      - priority
+      - source
+      - created_at
+      - address
+      - issue_text
+      - department_key
+      - department_name
+      - term
+      - confidence
+      - image_match_status
+      - flags
+      - report_count
+      - dispatch_ref
+      - events
+      - pdf_url
+      title: GrievanceDetail
+    GrievanceDraftResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        human_id:
+          type: string
+          title: Human Id
+        status:
+          type: string
+          title: Status
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        department_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Department Name
+        priority:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Priority
+        term:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Term
+        confidence:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Confidence
+        address:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Address
+        issue_text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Issue Text
+        image_match_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Image Match Status
+        flags:
+          items:
+            type: string
+          type: array
+          title: Flags
+        pdf_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Pdf Url
+        taxonomy_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Taxonomy Version
+        category_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Id
+        category_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Label
+        domain_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Domain Label
+        safety_level:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Safety Level
+        asset_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asset Scope
+        disposition:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Disposition
+        review_status:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Review Status
+        structured_facts:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Structured Facts
+        routing:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Routing
+        transcript_metadata:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Transcript Metadata
+        voice_note_urls:
+          items:
+            type: string
+          type: array
+          title: Voice Note Urls
+        voice_note_metadata:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Voice Note Metadata
+      type: object
+      required:
+      - id
+      - human_id
+      - status
+      - category
+      - department_name
+      - priority
+      - term
+      - confidence
+      - address
+      - issue_text
+      - image_match_status
+      - flags
+      - pdf_url
+      title: GrievanceDraftResponse
+    GrievanceEventRead:
+      properties:
+        status:
+          type: string
+          title: Status
+        note:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Note
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - status
+      - note
+      - created_at
+      title: GrievanceEventRead
+    GrievanceReviewPatch:
+      properties:
+        category_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Id
+        asset_scope:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Asset Scope
+        summary:
+          anyOf:
+          - type: string
+            maxLength: 600
+          - type: 'null'
+          title: Summary
+        clarification_answer:
+          anyOf:
+          - type: string
+            maxLength: 2000
+          - type: 'null'
+          title: Clarification Answer
+      type: object
+      title: GrievanceReviewPatch
+    GrievanceSummary:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        human_id:
+          type: string
+          title: Human Id
+        category:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category
+        status:
+          type: string
+          title: Status
+        priority:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Priority
+        source:
+          type: string
+          title: Source
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - human_id
+      - category
+      - status
+      - priority
+      - source
+      - created_at
+      title: GrievanceSummary
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    MessageRead:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        contact_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Contact Id
+        meta_message_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Meta Message Id
+        direction:
+          type: string
+          title: Direction
+        message_type:
+          type: string
+          title: Message Type
+        text_body:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Text Body
+        media_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Media Id
+        media_mime_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Media Mime Type
+        location_latitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Location Latitude
+        location_longitude:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Location Longitude
+        location_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Location Name
+        location_address:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Location Address
+        location_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Location Url
+        raw_payload:
+          additionalProperties: true
+          type: object
+          title: Raw Payload
+        received_at:
+          type: string
+          format: date-time
+          title: Received At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - contact_id
+      - meta_message_id
+      - direction
+      - message_type
+      - text_body
+      - media_id
+      - media_mime_type
+      - location_latitude
+      - location_longitude
+      - location_name
+      - location_address
+      - location_url
+      - raw_payload
+      - received_at
+      - created_at
+      - updated_at
+      title: MessageRead
+    MockComplaintRequest:
+      properties:
+        human_id:
+          type: string
+          title: Human Id
+        summary:
+          type: string
+          title: Summary
+      type: object
+      required:
+      - human_id
+      - summary
+      title: MockComplaintRequest
+    MockComplaintResponse:
+      properties:
+        ref:
+          type: string
+          title: Ref
+      type: object
+      required:
+      - ref
+      title: MockComplaintResponse
+    OfficialAction:
+      properties:
+        action:
+          type: string
+          enum:
+          - approve
+          - correct
+          - redirect
+          - reject
+          - request_clarification
+          title: Action
+        reason:
+          type: string
+          maxLength: 1000
+          minLength: 3
+          title: Reason
+        category_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Category Id
+        asset_scope:
+          anyOf:
+          - type: string
+            enum:
+            - public
+            - private
+            - unknown
+          - type: 'null'
+          title: Asset Scope
+        safety_level:
+          anyOf:
+          - type: string
+            enum:
+            - none
+            - possible
+            - immediate
+          - type: 'null'
+          title: Safety Level
+        department_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Department Key
+      type: object
+      required:
+      - action
+      - reason
+      title: OfficialAction
+    OfficialCodeRequest:
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email
+      type: object
+      required:
+      - email
+      title: OfficialCodeRequest
+    OfficialCodeRequested:
+      properties:
+        status:
+          type: string
+          title: Status
+          default: accepted
+        challenge_id:
+          type: string
+          format: uuid
+          title: Challenge Id
+      type: object
+      required:
+      - challenge_id
+      title: OfficialCodeRequested
+    OfficialCodeVerify:
+      properties:
+        challenge_id:
+          type: string
+          format: uuid
+          title: Challenge Id
+        code:
+          type: string
+          maxLength: 12
+          minLength: 6
+          title: Code
+      type: object
+      required:
+      - challenge_id
+      - code
+      title: OfficialCodeVerify
+    OfficialSession:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        official:
+          $ref: '#/components/schemas/OfficialProfile'
+      type: object
+      required:
+      - access_token
+      - official
+      title: OfficialSession
+    RefreshResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+      type: object
+      required:
+      - access_token
+      title: RefreshResponse
+    RequestCodeRequest:
+      properties:
+        phone:
+          type: string
+          maxLength: 32
+          minLength: 5
+          title: Phone
+        browser_nonce:
+          anyOf:
+          - type: string
+            maxLength: 256
+            minLength: 32
+          - type: 'null'
+          title: Browser Nonce
+        browser_label:
+          anyOf:
+          - type: string
+            maxLength: 128
+          - type: 'null'
+          title: Browser Label
+      type: object
+      required:
+      - phone
+      title: RequestCodeRequest
+    RequestCodeResponse:
+      properties:
+        verification_id:
+          type: string
+          format: uuid
+          title: Verification Id
+        method:
+          type: string
+          title: Method
+          default: reverse_code
+        code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Code
+        wa_link:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Wa Link
+        browser_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Browser Label
+        requested_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Requested At
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+      type: object
+      required:
+      - verification_id
+      title: RequestCodeResponse
+    SendTextRequest:
+      properties:
+        to:
+          type: string
+          maxLength: 32
+          minLength: 5
+          title: To
+        body:
+          type: string
+          maxLength: 4096
+          minLength: 1
+          title: Body
+      type: object
+      required:
+      - to
+      - body
+      title: SendTextRequest
+    SendTextResponse:
+      properties:
+        provider_response:
+          additionalProperties: true
+          type: object
+          title: Provider Response
+        stored_message:
+          $ref: '#/components/schemas/MessageRead'
+      type: object
+      required:
+      - provider_response
+      - stored_message
+      title: SendTextResponse
+    TranscriptionPreview:
+      properties:
+        text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Text
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+        status:
+          type: string
+          title: Status
+      type: object
+      required:
+      - status
+      title: TranscriptionPreview
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    ErrorDetail:
+      type: object
+      properties:
+        detail:
+          description: Human-readable error message (or structured object for upstream provider errors).
+      required:
+      - detail
+    QueueItem:
+      type: object
+      description: Grievance shape returned by the official-portal queue/detail/action endpoints (jan_setu.officials._queue_item).
+      properties:
+        id:
+          type: string
+          format: uuid
+        human_id:
+          type: string
+        status:
+          type: string
+        review_status:
+          type: string
+        category_id:
+          type: string
+          nullable: true
+        category_label:
+          type: string
+        domain:
+          type: string
+          nullable: true
+        department_key:
+          type: string
+          nullable: true
+        priority:
+          type: string
+          nullable: true
+        safety_level:
+          type: string
+          nullable: true
+        disposition:
+          type: string
+          nullable: true
+        confidence:
+          type: number
+          nullable: true
+        address:
+          type: string
+          nullable: true
+        issue_text:
+          type: string
+          nullable: true
+        structured_facts:
+          type: object
+          additionalProperties: true
+          nullable: true
+        routing:
+          type: object
+          additionalProperties: true
+          nullable: true
+        flags:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        state_version:
+          type: integer
+      required:
+      - id
+      - human_id
+      - status
+      - review_status
+      - category_label
+      - flags
+      - created_at
+      - state_version
+    OfficialMetrics:
+      type: object
+      description: Aggregate counters computed over the official's visible queue (jan_setu.officials.official_metrics).
+      properties:
+        total_visible:
+          type: integer
+        pending_review:
+          type: integer
+        immediate_safety:
+          type: integer
+        failed_ai:
+          type: integer
+        failed_dispatch:
+          type: integer
+      required:
+      - total_visible
+      - pending_review
+      - immediate_safety
+      - failed_ai
+      - failed_dispatch
+    OfficialProfile:
+      type: object
+      description: Official's own profile, embedded in the sign-in response (jan_setu.officials.verify_official_code).
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum:
+          - triage_officer
+          - department_officer
+          - supervisor
+          - auditor
+          - admin
+        jurisdiction_id:
+          type: string
+          nullable: true
+        department_keys:
+          type: array
+          items:
+            type: string
+      required:
+      - id
+      - name
+      - email
+      - role
+      - department_keys
+  securitySchemes:
+    citizenBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Access token from /auth/status or /auth/refresh, sent as `Authorization: Bearer <token>`.'
+    officialBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token from /api/official/auth/verify, audience-scoped separately from citizen
+        tokens.
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Static internal API key for /v1/contacts and /v1/messages*, set via the API_KEY setting.
+    metaWebhookSignature:
+      type: apiKey
+      in: header
+      name: X-Hub-Signature-256
+      description: HMAC-SHA256 of the raw request body, signed by Meta with WHATSAPP_APP_SECRET. Not caller-supplied.
+servers:
+- url: http://localhost:8000
+  description: Local development
+tags:
+- name: auth
+  description: 'Citizen sign-in: WhatsApp reverse-OTP request/poll and session refresh (US-01).'
+- name: grievances
+  description: Citizen complaint filing, review, and status tracking shared by the web portal (US-02 to
+    US-08, US-10).
+- name: official operations
+  description: Department-scoped triage console for government staff (US-03 to US-07).
+- name: whatsapp
+  description: 'Meta WhatsApp Cloud API webhook: the transport for the WhatsApp bot channel (US-01, US-02,
+    US-03, US-09, US-10).'
+- name: health
+  description: Liveness/readiness probes for deployment infrastructure. Not citizen- or official-facing.
+- name: contacts
+  description: Internal/ops read access to WhatsApp contacts. Requires X-API-Key; not part of any citizen-facing
+    flow.
+- name: messages
+  description: Internal/ops read and send access to WhatsApp messages. Requires X-API-Key; not part of
+    any citizen-facing flow.
+- name: internal
+  description: Development/demo-only endpoints not exposed to citizens or officials in production.

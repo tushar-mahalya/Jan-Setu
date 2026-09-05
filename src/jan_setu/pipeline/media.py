@@ -8,6 +8,7 @@ URL for later use.
 
 import logging
 import mimetypes
+import time
 import uuid
 from pathlib import Path
 
@@ -95,15 +96,50 @@ async def download_whatsapp_media(
     token = settings.whatsapp_access_token.get_secret_value()
     headers = {"Authorization": f"Bearer {token}"}
 
+    start = time.perf_counter()
     lookup_url = f"https://graph.facebook.com/{settings.whatsapp_graph_api_version}/{media_id}"
-    lookup = await client.get(lookup_url, headers=headers)
-    lookup.raise_for_status()
-    info = lookup.json()
-    media_url = info["url"]
+    try:
+        lookup = await client.get(lookup_url, headers=headers)
+        lookup.raise_for_status()
+        info = lookup.json()
+    except (httpx.HTTPError, ValueError):
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.warning(
+            "media_fetch_failed", extra={"media_id": media_id, "duration_ms": duration_ms}
+        )
+        raise
+
+    try:
+        media_url = info["url"]
+    except (KeyError, TypeError) as exc:
+        # A 2xx response with no "url" (unexpected shape, media still processing,
+        # etc.) is a provider failure like any other — surface it as the same
+        # exception type callers already catch, instead of an uncaught KeyError.
+        raise httpx.HTTPError(f"WhatsApp media lookup for {media_id!r} returned no url") from exc
     mime_type = info.get("mime_type", "application/octet-stream")
 
-    download = await client.get(media_url, headers=headers)
-    download.raise_for_status()
+    try:
+        download = await client.get(media_url, headers=headers)
+        download.raise_for_status()
+    except httpx.HTTPError:
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.warning(
+            "media_fetch_failed", extra={"media_id": media_id, "duration_ms": duration_ms}
+        )
+        raise
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    size_bytes = len(download.content)
+    logger.info(
+        "media_fetched",
+        extra={
+            "media_id": media_id,
+            "mime_type": mime_type,
+            "size_bytes": size_bytes,
+            "status_code": download.status_code,
+            "duration_ms": duration_ms,
+        },
+    )
     return download.content, mime_type
 
 

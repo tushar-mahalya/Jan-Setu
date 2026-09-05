@@ -5,12 +5,16 @@ libs, versus hand-rolling PDF syntax.
 """
 
 import io
+import logging
+import time
 from contextlib import ExitStack
 from dataclasses import dataclass, field
 from importlib.resources import as_file, files
 from pathlib import Path
 
 from fpdf import FPDF
+
+logger = logging.getLogger(__name__)
 
 PDF_THUMBNAIL_MAX_PX = 800
 FONT_PACKAGE = "jan_setu.assets.fonts"
@@ -67,6 +71,7 @@ def _thumbnail_jpeg(photo_bytes: bytes) -> bytes | None:
 
 
 def build_grievance_pdf(summary: PdfSummary, photo_bytes: bytes | None = None) -> bytes:
+    started_at = time.perf_counter()
     pdf = FPDF()
     with ExitStack() as font_stack:
         _register_unicode_fonts(pdf, font_stack)
@@ -107,4 +112,14 @@ def build_grievance_pdf(summary: PdfSummary, photo_bytes: bytes | None = None) -
                 pdf.ln(4)
                 pdf.image(io.BytesIO(thumbnail), w=100)
 
-        return bytes(pdf.output())
+        pdf_bytes = bytes(pdf.output())
+        logger.info(
+            "pdf_generated",
+            extra={
+                "human_id": summary.human_id,
+                "size_bytes": len(pdf_bytes),
+                "has_photo": photo_bytes is not None,
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+            },
+        )
+        return pdf_bytes

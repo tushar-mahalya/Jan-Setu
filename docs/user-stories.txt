@@ -1,0 +1,266 @@
+JAN-SETU: SMART USER STORIES
+
+======================================================================
+3.1 ONE-TIME REGISTRATION VIA WHATSAPP-LINKED MOBILE NUMBER
+======================================================================
+
+As a citizen, I want to register on Jan-Setu using my WhatsApp-linked mobile number, so that I can access both the web app and WhatsApp bot under a single identity.
+
+Specific:
+OTP sent to WhatsApp-linked mobile; one account grants access to both channels.
+
+Measurable:
+OTP delivered within 60 sec; registration completed under 2 min.
+
+Actionable:
+OTP verification via WhatsApp Business API.
+
+Relevant:
+Removes first-time digital entry barrier — P4, P6.
+
+Time-bound:
+Full registration in under 2 minutes.
+
+Acceptance Criteria:
+• OTP delivered within 60 seconds; registration completes in under 2 minutes.
+• One account grants access to both web app and WhatsApp bot.
+• UI available in Hindi and English.
+
+
+======================================================================
+3.2 VOICE NOTE COMPLAINT FILING VIA WHATSAPP BOT
+======================================================================
+
+As Pintu Yadav, I want to describe my complaint in Hindi via a WhatsApp voice note, so that I can file an issue without typing or visiting a government office.
+
+Specific:
+Voice note transcribed by Sarvam.ai multilingual STT via the Jan-Setu WhatsApp bot.
+
+Measurable:
+Transcription returned within 30 sec; user confirms before submission.
+
+Actionable:
+Sarvam.ai STT API integrated into WhatsApp bot pipeline.
+
+Relevant:
+Removes language and literacy barriers — P1, P5.
+
+Time-bound:
+Transcription returned within 30 seconds of voice note submission.
+
+Acceptance Criteria:
+• Bot accepts voice notes up to 2 minutes; transcription returned within 30 seconds.
+• Transcribed text shown to user for confirmation before filing.
+• Low-confidence transcriptions prompt the user to re-record or type.
+
+
+======================================================================
+3.3 LOCATION-BASED ROUTING TO CORRECT MUNICIPAL DEPARTMENT
+======================================================================
+
+As Namrita Singh, I want Jan-Setu to automatically assign the right department based on my complaint and location, so that I don't need to know government structure to file correctly.
+
+Specific:
+LLM classifies incident type; location maps complaint to the correct municipal jurisdiction.
+
+Measurable:
+Department assigned within 10 sec; shown to user before final submission.
+
+Actionable:
+LLM classification via OpenRouter + geolocation-to-department mapping.
+
+Relevant:
+Eliminates department-identification barrier — P2.
+
+Time-bound:
+Classification completed within 10 seconds of submission.
+
+Acceptance Criteria:
+• Department auto-assigned within 10 seconds based on location and complaint content.
+• User can view and correct the department assignment before confirming.
+• Misrouted complaints flagged for manual clerk review within 1 hour.
+
+
+======================================================================
+3.4 LLM IMAGE VERIFICATION AGAINST COMPLAINT DESCRIPTION
+======================================================================
+
+As Sanjay Kumar, I want the system to flag complaints where the photo doesn't match the text description, so that inconsistent submissions are caught before reaching my dashboard.
+
+Specific:
+Multimodal LLM compares submitted image to complaint text and scores consistency.
+
+Measurable:
+Verification completed within 15 sec; flagged complaints visually marked in the dashboard.
+
+Actionable:
+Multimodal LLM image-text comparison via OpenRouter.
+
+Relevant:
+Filters unverified or misrepresented submissions — P7.
+
+Time-bound:
+Result available within 15 seconds of submission.
+
+Acceptance Criteria:
+• Low-consistency complaints are flagged in the clerk's dashboard, not auto-rejected.
+• Verification result stored in the complaint audit trail.
+
+
+======================================================================
+3.5 COMPLAINT CLASSIFICATION AS SHORT-TERM FIX OR LONG-TERM PROJECT
+======================================================================
+
+As Sanjay Kumar, I want complaints to arrive pre-tagged by resolution scope, so that I can prioritise work without manual triage.
+
+Specific:
+LLM classifies each complaint as "Short-Term Fix" or "Long-Term Project" at intake.
+
+Measurable:
+Every complaint arrives tagged; zero unclassified complaints reach the dashboard.
+
+Actionable:
+LLM prompt-based classification via OpenRouter.
+
+Relevant:
+Reduces manual classification overhead — P9.
+
+Time-bound:
+Classification completed within 10 seconds of submission.
+
+Acceptance Criteria:
+• Every complaint is tagged before entering the clerk's queue.
+• Short-term and long-term complaints are displayed in separate dashboard sections.
+• Clerk can override the classification with a single action.
+
+
+======================================================================
+3.6 AGGREGATION TIME WINDOW FOR NON-PRIORITY COMPLAINTS
+======================================================================
+
+As Sanjay Kumar, I want duplicate non-priority complaints about the same issue to be merged before submission, so that my department receives one consolidated report instead of dozens of individual duplicates.
+
+Specific:
+Non-priority categories (sanitation, potholes, streetlamps, drainage) held in a location-based time window; duplicates merged before forwarding.
+
+Measurable:
+Department receives a single consolidated entry with affected-citizen count attached.
+
+Actionable:
+Location-clustering logic + configurable time-window rules in Jan-Setu backend.
+
+Relevant:
+Reduces duplicate complaint volume — P9, P10.
+
+Time-bound:
+Consolidated report forwarded at close of the configured time window.
+
+Acceptance Criteria:
+• Complaints within the same location radius and category are merged during the window.
+• Consolidated report includes count of citizens who reported the same issue.
+• Filing citizens receive confirmation that their complaint is part of a consolidated submission.
+
+
+======================================================================
+3.7 IMMEDIATE FILING FOR PRIORITY COMPLAINTS
+======================================================================
+
+As Aditya Singh, I want priority complaints (e.g., animal cruelty) to bypass the aggregation window and be filed immediately, so that urgent issues aren't delayed by routines designed for non-critical matters.
+
+Specific:
+Priority complaint categories bypass the aggregation window; forwarded instantly upon LLM classification.
+
+Measurable:
+Complaint reaches the responsible department within 5 minutes of submission.
+
+Actionable:
+Routing rules override aggregation logic for defined priority categories.
+
+Relevant:
+Ensures urgent issues are not held alongside routine complaints — P1.
+
+Time-bound:
+Department receives complaint within 5 minutes of citizen submission.
+
+Acceptance Criteria:
+• Priority complaints bypass aggregation and are forwarded within 5 minutes of classification.
+• Citizen receives immediate acknowledgment confirming the complaint is fast-tracked.
+
+
+======================================================================
+3.8 COMPLAINT STATUS TRACKING ON WEB APP
+======================================================================
+
+As Teena Khanna, I want to view my complaint's live status on the Jan-Setu web app, so that I don't need to call or visit anyone for an update.
+
+Specific:
+Web app displays complaint lifecycle: Drafted → Submitted → Processing → Completed.
+
+Measurable:
+Status updated within 24 hrs of any official action; user notified on every change.
+
+Actionable:
+Status-tracking backend synced with the Jan-Setu complaint pipeline.
+
+Relevant:
+Eliminates post-submission invisibility — P3.
+
+Time-bound:
+Status updated within 24 hours; 7-day inactivity triggers an escalation flag.
+
+Acceptance Criteria:
+• Status updated within 24 hours of any department action.
+• User receives a notification on every status change.
+• No status change for 7 days triggers an automatic escalation flag.
+
+
+======================================================================
+3.9 STATUS REQUEST VIA JAN-SETU WHATSAPP BOT
+======================================================================
+
+As Pintu Yadav, I want to check my complaint status by messaging the Jan-Setu bot in Hindi, so that I get an update without opening the web app.
+
+Specific:
+WhatsApp bot returns current complaint status on user request.
+
+Measurable:
+Status returned within 30 seconds of the user's message.
+
+Actionable:
+WhatsApp Business API + backend status query from Jan-Setu database.
+
+Relevant:
+Extends status visibility to non-web-app users — P3.
+
+Time-bound:
+Response delivered within 30 seconds.
+
+Acceptance Criteria:
+• Bot returns current complaint status within 30 seconds in plain Hindi.
+• Resolved complaints include a brief summary of action taken.
+
+
+======================================================================
+3.10 MANDATORY STRUCTURED INTAKE ON BOTH CHANNELS
+======================================================================
+
+As Sanjay Kumar, I want all incoming complaints to arrive with validated mandatory fields, so that I can act on them the same day without chasing missing information.
+
+Specific:
+Jan-Setu enforces name, mobile number, location, and issue description on web app and WhatsApp bot.
+
+Measurable:
+Zero complaints reach the dashboard with missing mandatory fields.
+
+Actionable:
+Form validation on web app; step-by-step guided flow on WhatsApp bot.
+
+Relevant:
+Eliminates the 24–48 hr delay from incomplete complaints — P7.
+
+Time-bound:
+Validation enforced at submission; incomplete complaints cannot be forwarded.
+
+Acceptance Criteria:
+• Web app blocks submission for missing fields; user prompted in their language.
+• WhatsApp bot does not advance without a valid response for each required field.

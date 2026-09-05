@@ -4,6 +4,7 @@ import { apiPostEmpty } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useI18n } from "../i18n/I18nContext";
 import LanguagePicker from "../i18n/LanguagePicker";
+import { assets } from "../assets";
 
 type IconName = "dashboard" | "new" | "about" | "logout";
 
@@ -33,7 +34,7 @@ export default function AuthenticatedShell({ children }: { children: ReactNode }
   return <div className="authenticated-shell" lang={bcp47}>
     <a className="skip-link" href="#app-content">{t.skipToContent}</a>
     <aside className="app-sidebar">
-      <NavLink className="app-brand" to="/dashboard"><img src="/jan-setu-logo-dark.svg" alt="" aria-hidden="true" />{t.brand}</NavLink>
+      <NavLink className="app-brand" to="/dashboard"><img src={assets.logoDark} alt="" aria-hidden="true" />{t.brand}</NavLink>
       <p className="app-sidebar__descriptor">{t.shellDescriptor}</p>
       <nav className="app-nav" aria-label={t.appNavAria}>
         <NavLink to="/dashboard"><NavIcon name="dashboard" /><span>{t.navDashboard}</span></NavLink>
@@ -46,7 +47,7 @@ export default function AuthenticatedShell({ children }: { children: ReactNode }
       </div>
     </aside>
     <header className="app-mobilebar">
-      <NavLink className="app-brand" to="/dashboard"><img src="/jan-setu-logo-dark.svg" alt="" aria-hidden="true" />{t.brand}</NavLink>
+      <NavLink className="app-brand" to="/dashboard"><img src={assets.logoDark} alt="" aria-hidden="true" />{t.brand}</NavLink>
       <div className="app-language--mobile">
         <LanguagePicker variant="inverse" />
       </div>

@@ -1,0 +1,360 @@
+JAN SETU — DESIGN OF COMPONENTS
+
+Designed & Authored By: Tushar Sharma
+
+======================================================================
+1. SYSTEM OVERVIEW
+======================================================================
+
+Jan Setu is a civic complaint platform. Citizens can submit complaints through a React web portal or WhatsApp. Both channels use the same FastAPI backend, PostgreSQL database, and complaint-processing pipeline.
+
+The platform:
+• Validates complaint information.
+• Accepts text, voice notes, location, and optional photos.
+• Converts voice notes to text.
+• Classifies, prioritises, and routes complaints.
+• Checks whether an optional photo matches the complaint description.
+• Groups similar routine complaints.
+• Dispatches complaints to available department adapters.
+• Stores complaint history for citizens and officials.
+
+
+======================================================================
+2. MAIN COMPONENTS
+======================================================================
+
+2.1 Citizen Web Portal
+
+Technology: React, TypeScript, Vite
+
+Purpose:
+• Provides public pages, citizen sign-in, complaint filing, complaint tracking, and language selection.
+
+Key components:
+• Login and Auth Context — WhatsApp-linked reverse-OTP sign-in and session restoration.
+• Filing Wizard — Four steps: location, issue details, photo evidence, and review.
+• Location Picker — Lets citizens choose a location using a map, GPS, or map movement.
+• Voice Recorder — Records audio complaints and provides transcript preview.
+• Photo Upload — Lets citizens attach optional image evidence.
+• Review Card — Shows processed complaint details before confirmation.
+• Dashboard — Lists citizen complaints and current statuses.
+• Complaint Detail and Timeline — Shows complaint history, updates, and available receipt.
+• Language Picker and I18n Context — Supports English, Hindi, Bengali, Marathi, Telugu, and Tamil.
+
+Supports: US-01, US-02, US-03, US-04, US-05, US-08, US-10.
+
+
+2.2 WhatsApp Complaint Interface
+
+Technology: Meta WhatsApp Cloud API
+
+Purpose:
+• Gives citizens a familiar, guided alternative to the web portal.
+
+Key components:
+• Webhook — Receives and verifies incoming WhatsApp events.
+• WhatsApp Client — Sends text, interactive buttons, location prompts, and documents.
+• Conversation Engine — Guides citizens through location, issue description, optional photo, and confirmation.
+• Conversation Processor — Stores and processes inbound and outbound messages reliably.
+
+Key behaviour:
+• Citizens can share a location, send text or voice messages, attach a photo, and confirm a complaint.
+• A standalone `status` or `स्थिति` message returns recent complaint status information.
+• Conversation state is stored so that the process can recover after interruptions.
+
+Supports: US-01, US-02, US-03, US-09, US-10.
+
+
+2.3 FastAPI Application Server
+
+Technology: FastAPI, Uvicorn
+
+Purpose:
+• Acts as the central backend for both citizen channels and the official portal.
+
+Responsibilities:
+• Receives web, WhatsApp, and official portal requests.
+• Manages authentication and API access.
+• Creates and updates complaint records.
+• Stores WhatsApp events before background processing.
+• Serves citizen and official complaint information.
+• Connects the interfaces to the database and processing pipeline.
+
+Main API groups:
+• WhatsApp webhook: `GET/POST /whatsapp/webhook`
+• Citizen authentication: `/auth/request-code`, `/auth/status`, `/auth/refresh`, `/auth/logout`
+• Citizen complaints: `/api/grievances`
+• Official portal: official login, queue, detail, and action routes.
+
+Supports: US-01 to US-10.
+
+
+2.4 Authentication Module
+
+Purpose:
+• Provides secure citizen and official access.
+
+Citizen authentication:
+• Uses a WhatsApp-linked, reverse-OTP login flow.
+• Access token stays in browser memory.
+• Refresh token is stored as a protected httpOnly cookie.
+• Verification code has a limited lifetime.
+
+Official authentication:
+• Uses official login with department-scoped access.
+• Restricts officials to complaints relevant to their jurisdiction.
+
+Supports: US-01 and official review activities.
+
+
+2.5 Complaint Processing Pipeline
+
+Purpose:
+• Processes complaints from both web and WhatsApp through one shared workflow.
+
+Processing steps:
+1. Read text and voice evidence.
+2. Convert voice recordings into text where possible.
+3. Resolve location into an address when possible.
+4. Classify the complaint category and suggested department.
+5. Identify priority, safety level, and short-term or long-term resolution scope.
+6. Check whether attached image evidence is consistent with the complaint.
+7. Prepare a complaint summary PDF.
+8. Send the confirmed complaint for aggregation, dispatch, or official review.
+
+Important design rule:
+• A temporary service failure does not discard a complaint. The system records a flag and continues or sends the case for review.
+
+Supports: US-02 to US-07.
+
+
+2.6 Speech-to-Text Service
+
+Technology: Sarvam speech-to-text service
+
+Purpose:
+• Converts voice complaints into text for review and classification.
+
+Behaviour:
+• Combines available typed text and voice transcription.
+• Stores transcript details with the complaint.
+• If transcription fails, keeps the complaint and records a failure flag.
+
+Supports: US-02.
+
+
+2.7 Classifier, Image Checker, and Taxonomy
+
+Technology: Groq and OpenRouter for structured extraction and image checking.
+
+Purpose:
+• Understands the civic issue and prepares useful information for routing and review.
+
+Classifier output includes:
+• Complaint category.
+• Suggested department.
+• Priority and safety level.
+• Short-term fix or long-term project classification.
+• Complaint summary and missing details.
+• Confidence level and routing information.
+
+Image checker:
+• Compares optional photo evidence with complaint details.
+• Flags possible inconsistencies.
+• Never automatically rejects a complaint only because of an image mismatch.
+
+Taxonomy and routing:
+• Maps complaint categories to departments, routing rules, jurisdiction, and policy decisions.
+
+Supports: US-03, US-04, US-05, US-07.
+
+
+2.8 Geocoding Service
+
+Technology: Nominatim / OpenStreetMap
+
+Purpose:
+• Turns map coordinates into a readable address.
+• Helps connect a complaint location with the correct jurisdiction and department.
+
+Behaviour:
+• Preserves coordinates even if an address lookup is unavailable.
+• Uses cached results and provider throttling.
+• Public Nominatim is development-only; production requires a suitable geocoding provider.
+
+Supports: US-03.
+
+
+2.9 Deduplication and Aggregation Engine
+
+Purpose:
+• Reduces repeated routine complaints about the same problem in the same area.
+
+Behaviour:
+• Identifies nearby, same-category, non-priority complaints.
+• Adds duplicate reports to a main complaint record.
+• Tracks the number of citizens reporting the same issue.
+• Holds eligible routine complaints for a configurable aggregation window.
+• Bypasses aggregation for priority complaints.
+
+Supports: US-06 and US-07.
+
+
+2.10 Background Worker
+
+Purpose:
+• Handles durable work outside normal web request processing.
+
+Responsibilities:
+• Processes stored WhatsApp events.
+• Runs and recovers complaint enrichment work.
+• Sends pending WhatsApp replies.
+• Expires aggregation windows.
+• Dispatches completed complaints.
+• Retries complaints when dispatch temporarily fails.
+
+Supports: US-02 to US-09.
+
+
+2.11 PDF and Media Services
+
+Purpose:
+• Stores citizen evidence and prepares complaint records.
+
+Media service:
+• Stores uploaded photos, audio files, and generated documents.
+
+PDF generator:
+• Creates a Unicode complaint summary containing ticket ID, issue, location, category, department, priority, and supporting details.
+• Supports web downloads and WhatsApp confirmation documents.
+
+Supports: US-02, US-04, US-08.
+
+
+2.12 Dispatch Adapters
+
+Purpose:
+• Sends confirmed complaints to a municipal destination.
+
+Implemented adapters:
+• SMTP email dispatch.
+• Mock municipal API dispatch.
+
+Behaviour:
+• Priority cases can move directly toward dispatch.
+• Routine cases can enter the aggregation window first.
+• Failed dispatches are retried and retained for recovery.
+
+Supports: US-06 and US-07.
+
+
+2.13 Official Portal
+
+Technology: React official console with FastAPI official API.
+
+Purpose:
+• Lets authorised government staff review and act on complaint cases.
+
+Key features:
+• Department-scoped complaint queue.
+• Queue metrics for visible, pending, safety, AI-unavailable, and dispatch-failed cases.
+• Complaint evidence, routing information, system flags, and history.
+• Actions to approve route, redirect, reject, or request clarification.
+• Required decision note for official actions.
+• Audit trail of official decisions.
+
+Supports: US-04, US-05, US-06, US-07.
+
+
+2.14 Data and Repository Layer
+
+Technology: PostgreSQL 16 and file storage.
+
+Purpose:
+• Provides durable storage and a clear separation between application logic and data access.
+
+Stores:
+• Citizen accounts, verification codes, and refresh tokens.
+• WhatsApp contacts, messages, conversations, and webhook events.
+• Complaints, status events, classifications, routing decisions, and dispatch records.
+• Official accounts and official action audit records.
+• Uploaded media and generated PDF summaries.
+• Geocoding cache and provider rate-limit information.
+
+Supports: US-01 to US-10.
+
+
+======================================================================
+3. COMPONENT FLOW
+======================================================================
+
+WEB FLOW
+
+Citizen Web Portal
+→ FastAPI Server
+→ PostgreSQL and File Storage
+→ Shared Complaint Pipeline
+→ Classification / Geocoding / Image Check / PDF
+→ Aggregation, Dispatch, or Official Review
+→ Complaint Status Timeline
+
+WHATSAPP FLOW
+
+Citizen
+→ Meta WhatsApp Cloud API
+→ WhatsApp Webhook
+→ FastAPI Server
+→ Stored Event and Conversation State
+→ Background Worker
+→ Shared Complaint Pipeline
+→ WhatsApp Confirmation or Status Reply
+
+
+======================================================================
+4. SECURITY, ACCESSIBILITY, AND RELIABILITY
+======================================================================
+
+Security:
+• WhatsApp webhooks use HMAC-SHA256 verification.
+• Webhook events are handled idempotently to prevent duplicate processing.
+• Citizen access uses reverse-OTP, memory-only access tokens, and protected refresh tokens.
+• Official actions are department-scoped and recorded in an audit trail.
+
+Accessibility and inclusion:
+• Mobile-friendly interfaces with large controls and clear guidance.
+• Keyboard access, visible focus, readable layouts, and reduced-motion support.
+• Status is not communicated through colour alone.
+• English and Hindi WhatsApp copy; six web interface languages.
+
+Reliability:
+• Incoming WhatsApp events are saved before background processing.
+• Worker recovery handles interrupted processing and pending replies.
+• External provider failures are flagged instead of losing citizen complaints.
+• Dispatch failures are retained and retried.
+
+
+======================================================================
+5. STORY TRACEABILITY SUMMARY
+======================================================================
+
+US-01: Login, Auth Module, WhatsApp webhook/client, Auth Context.
+US-02: Voice Recorder, Conversation Engine, STT Service, Processing Pipeline.
+US-03: Location Picker, Geocoder, Classifier, Taxonomy.
+US-04: Photo Upload, Media Service, Image Checker, Official Console.
+US-05: Classifier, Taxonomy, Review Card, Official Console.
+US-06: Deduplication Engine, Worker, Grievance and Job Repositories.
+US-07: Taxonomy Policy, Pipeline Orchestrator, Dispatch Adapter.
+US-08: Dashboard, Complaint Detail, Status Timeline, Grievance Events.
+US-09: WhatsApp Webhook, Conversation Processor, Outbound Dispatcher.
+US-10: Filing Wizard, API Schemas, Persisted WhatsApp Conversation Flow.
+
+
+======================================================================
+6. CURRENT LIMITS AND FUTURE EXTENSIONS
+======================================================================
+
+Current implementation includes SMTP and mock municipal API dispatch for demonstration. Real department adapters can replace them later.
+
+Public Nominatim is suitable only for development traffic. A production geocoding service is required for real deployment.
+
+The system supports status retrieval and complaint timelines. Measured response-time targets, status-change push notifications, seven-day inactivity escalation, natural-language WhatsApp status understanding, and resolved-action summaries require further operational implementation or verification.

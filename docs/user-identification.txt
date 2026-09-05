@@ -1,0 +1,225 @@
+JAN-SETU: USER IDENTIFICATION
+
+Jan-Setu is designed for people who report civic problems, people who receive and manage those complaints, and organisations that benefit from a better complaint process.
+
+The platform is built around a simple idea: citizens should be able to report a local problem without needing to understand government systems, while officials should receive clearer and more useful information.
+
+======================================================================
+1. PRIMARY USERS: CITIZENS
+======================================================================
+
+Citizens are the main users of Jan-Setu. They may need to report local problems such as potholes, drainage blockages, broken streetlights, sanitation issues, damaged public facilities, or urgent safety concerns.
+
+Different citizens have different levels of comfort with technology. Jan-Setu supports this by offering both a web app and a guided WhatsApp flow.
+
+
+1.1 LOW-DIGITAL-LITERACY CITIZENS
+
+Example profile: Pintu Yadav, farmer and shopkeeper, Bihar
+
+Who they are:
+• People who use WhatsApp regularly but may not know about government complaint websites.
+• People who may live in rural or semi-urban areas.
+• People who are more comfortable speaking than typing.
+• People who may find long forms and formal government language difficult.
+
+Current difficulties:
+• They may need to visit government offices several times to report a problem.
+• They may spend money travelling to offices.
+• They may face pressure to rely on informal payments or personal contacts.
+• They may not receive confirmation that their complaint was registered.
+
+What they need from Jan-Setu:
+• A familiar WhatsApp-based way to begin a complaint.
+• Simple, guided steps in understandable language.
+• Ability to share their location directly from their phone.
+• Ability to describe a problem using a voice message.
+• Clear confirmation and an easy way to check complaint status.
+
+
+1.2 DIGITALLY AWARE BUT PROCESS-UNFAMILIAR CITIZENS
+
+Example profiles: Aditya Singh, Namrita Singh, Teena Khanna
+
+Who they are:
+• People who use smartphones, online services, and messaging apps confidently.
+• Students, workers, community members, and urban residents.
+• People who are willing to use a web app but may not know civic complaint processes.
+
+Current difficulties:
+• They may not know that a suitable complaint portal exists.
+• They may not know which department handles a particular problem.
+• They may have tried toll-free numbers or office visits but received no tracking or follow-up.
+• They may be frustrated by having to repeat complaint details to different offices.
+
+What they need from Jan-Setu:
+• A simple web app for filing and tracking complaints.
+• Automatic guidance toward the correct department.
+• Ability to submit location, written details, voice recordings, and photos.
+• A ticket number and visible complaint status.
+• Fast handling for complaints that may be urgent.
+
+
+1.3 TECH-SAVVY CITIZENS
+
+Example profile: Harish Kumar, software engineer
+
+Who they are:
+• People with high digital confidence.
+• People who expect clear online services and transparent progress tracking.
+• People who are comfortable using maps, uploads, and web dashboards.
+
+Current difficulties:
+• They may be ready to use a civic platform but cannot identify the correct department.
+• They may lose trust when systems do not explain what happens after submission.
+• They may find traditional public-service portals unclear or difficult to navigate.
+
+What they need from Jan-Setu:
+• A well-designed, mobile-friendly web app.
+• Clear complaint history and status information.
+• A simple explanation of the category and destination of a complaint.
+• A reliable way to attach evidence and review details before submitting.
+• Transparency about whether a complaint is being reviewed, grouped, routed, or completed.
+
+
+======================================================================
+2. SECONDARY USERS: GOVERNMENT OFFICIALS AND COMPLAINT RECEIVERS
+======================================================================
+
+Government officials and complaint receivers use Jan-Setu to review incoming complaints, understand the issue, decide whether action is needed, and send cases to the right team.
+
+They need a system that reduces manual effort without removing human judgement.
+
+
+2.1 MUNICIPAL COMPLAINT CLERKS
+
+Example profile: Sanjay Kumar, Head Clerk, Patna Nagar Nigam
+
+Who they are:
+• Municipal staff members who receive, register, sort, and forward public complaints.
+• People who may handle a high number of complaints every day.
+• People responsible for ensuring cases reach the appropriate team.
+
+Current difficulties:
+• The entire workflow may depend on paper registers, calls, and manual forwarding.
+• They may handle around 60 to 250 complaints in a day.
+• Complaints often arrive missing important information such as location, contact details, or a proper description.
+• Fixing incomplete complaints can add one or two days to processing.
+• They may need to manually identify the problem type and responsible department.
+
+What they need from Jan-Setu:
+• A clear official complaint queue.
+• Complaints with location, contact information, and issue description already collected.
+• A short system-generated summary and suggested category.
+• Visible priority, safety, and evidence-related flags.
+• Options to approve a route, redirect a case, ask for clarification, or reject a case with a reason.
+• A record of actions taken on each complaint.
+
+
+2.2 UTILITY DEPARTMENT CLERKS
+
+Example profile: Savitur Tyagi, Clerk, Bijli Vibhag, West Midnapore
+
+Who they are:
+• Staff members working in specialised service departments, such as electricity, water, sanitation, roads, or drainage.
+• People who need to receive cases that fall within their department’s area of responsibility.
+
+Current difficulties:
+• Department portals may exist but are not widely used by citizens.
+• Many citizens still report problems in person.
+• Staff often receive complaints meant for a different department.
+• Misrouted cases waste staff time and delay action for citizens.
+
+What they need from Jan-Setu:
+• Better routing based on the complaint type and location.
+• Clear case summaries before they begin work.
+• Fewer duplicate and irrelevant complaints.
+• Clear information when a case needs review rather than automatic routing.
+• A way to receive priority cases quickly.
+
+
+======================================================================
+3. TERTIARY USERS: INDIRECT STAKEHOLDERS
+======================================================================
+
+These users may not use Jan-Setu as often as citizens or clerks, but the platform affects their work and helps them respond more effectively.
+
+
+3.1 FIELD OFFICERS
+
+Example profile: Sarvesh Pandey, CISF
+
+Who they are:
+• People who respond on the ground or investigate urgent public issues.
+• Staff who may currently receive complaints only after they pass through several offices.
+
+Current difficulties:
+• Complaints can arrive through slow manual forwarding chains.
+• Urgent cases may be delayed along with routine complaints.
+• Field teams may not receive enough location or evidence information before responding.
+
+What they need from Jan-Setu:
+• Faster access to priority or safety-related complaints.
+• Accurate location information.
+• Clear descriptions, photos, and other supporting details where available.
+• Better routing so the correct field team receives the case sooner.
+
+
+3.2 INSTITUTIONAL ADMINISTRATIVE STAFF
+
+Example profile: Vivek Kumar, Library Staff
+
+Who they are:
+• Administrative staff in institutions such as schools, libraries, public offices, campuses, or other public-serving organisations.
+• People who may manage complaints inside their own organisation or coordinate with local authorities.
+
+Current difficulties:
+• Complaint handling may rely on manual records and informal follow-up.
+• There may be no clear tracking system.
+• Staff may not know whether a reported issue has been acted on.
+• Repeated follow-ups can take time away from regular work.
+
+What they need from Jan-Setu:
+• A structured way to register and follow complaints.
+• Clear status updates.
+• Less manual coordination and fewer repeated phone calls.
+• A visible history of what was reported and what happened next.
+
+
+======================================================================
+4. SHARED USER NEEDS
+======================================================================
+
+Citizens need:
+• A simple and familiar way to report problems.
+• Support for local languages and different levels of digital confidence.
+• Location, voice, text, and photo options.
+• Clear confirmation that a complaint was received.
+• Easy complaint tracking without repeated office visits or calls.
+
+Government officials need:
+• Complete and structured complaint information.
+• Faster sorting and routing of cases.
+• Clear identification of urgent, uncertain, or duplicate reports.
+• Human control over important decisions.
+• A record of complaint handling and official actions.
+
+Field and institutional staff need:
+• Faster access to relevant cases.
+• Better information before responding.
+• Less dependence on manual forwarding and unclear follow-up.
+
+
+======================================================================
+5. HOW JAN-SETU SERVES ALL USER GROUPS
+======================================================================
+
+Jan-Setu acts as a bridge between citizens and public-service teams.
+
+For citizens, it makes civic complaint filing easier, more accessible, and easier to track.
+
+For officials, it turns incoming reports into clearer, more organised cases that can be reviewed and routed with less manual effort.
+
+For field teams and institutions, it improves the flow of information so the right people can respond with better context and fewer delays.
+
+The common goal is a complaint process that is more structured, accessible, transparent, and fair for everyone involved.

@@ -217,9 +217,22 @@ async def receive_webhook(
 
     background_tasks.add_task(drive_event, app_settings, request.app.state.http_client, event.id)
 
+    # Count webhook payload structure
+    entry_count = len(payload.get("entry", []))
     messages_seen = len(incoming_messages)
+    statuses_seen = 0
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            statuses_seen += len(value.get("statuses", []))
+
     logger.info(
         "whatsapp_webhook_accepted",
-        extra={"event_id": str(event.id), "messages_seen": messages_seen},
+        extra={
+            "event_id": str(event.id),
+            "entry_count": entry_count,
+            "messages_seen": messages_seen,
+            "statuses_seen": statuses_seen,
+        },
     )
     return {"status": "accepted", "messages_seen": messages_seen}

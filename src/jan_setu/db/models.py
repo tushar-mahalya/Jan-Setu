@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
 from typing import Any
-
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -11,11 +10,11 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
 from jan_setu.db.session import Base, utc_now
 
 
@@ -242,14 +241,22 @@ class Grievance(TimestampMixin, Base):
     policy_version: Mapped[str | None] = mapped_column(String(32))
     routing_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     structured_facts: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    transcript_metadata: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
-    state_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    transcript_metadata: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    state_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
 
     __table_args__ = (
         Index("ix_grievances_status", "status"),
         Index("ix_grievances_created_at", "created_at"),
         Index("ix_grievances_category_window", "category", "window_expires_at"),
         Index("ix_grievances_lat_lon", "location_latitude", "location_longitude"),
+        # Matches repositories/officials.py:list_scoped_grievances, which always
+        # filters on jurisdiction_id and (for department_officer) also on
+        # department_key — the officials triage dashboard's main query.
+        Index("ix_grievances_jurisdiction_department", "jurisdiction_id", "department_key"),
     )
 
 
@@ -301,7 +308,7 @@ class PhoneVerification(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -379,6 +386,19 @@ class WebhookEvent(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    __table_args__ = (
+        # repositories/webhook_events.py:fetch_unprocessed_event_ids scans
+        # WHERE processed_at IS NULL ORDER BY created_at. Without this, the
+        # plain created_at index still has to walk past every already-
+        # processed (oldest-first) row before reaching the small unprocessed
+        # tail, degrading as the table grows.
+        Index(
+            "ix_webhook_events_unprocessed",
+            "created_at",
+            postgresql_where=text("processed_at IS NULL"),
+        ),
+    )
+
 
 class Jurisdiction(TimestampMixin, Base):
     __tablename__ = "jurisdictions"
@@ -386,8 +406,12 @@ class Jurisdiction(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     taxonomy_version: Mapped[str] = mapped_column(String(32), nullable=False)
-    is_demo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_demo: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     geofence: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
@@ -403,7 +427,9 @@ class JurisdictionRoute(TimestampMixin, Base):
     department_key: Mapped[str] = mapped_column(String(64), nullable=False)
     owning_agency: Mapped[str] = mapped_column(String(255), nullable=False)
     dispatch_target: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
-    dispatch_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    dispatch_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
     sla_hours: Mapped[int | None] = mapped_column(Integer)
     source_url: Mapped[str | None] = mapped_column(Text)
     reviewed_by: Mapped[str | None] = mapped_column(String(255))
@@ -411,12 +437,11 @@ class JurisdictionRoute(TimestampMixin, Base):
     effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        Index(
-            "uq_jurisdiction_route_version_category",
+        UniqueConstraint(
             "jurisdiction_id",
             "taxonomy_version",
             "category_id",
-            unique=True,
+            name="uq_jurisdiction_route_version_category",
         ),
     )
 
@@ -432,14 +457,18 @@ class GrievanceExtraction(Base):
     taxonomy_version: Mapped[str] = mapped_column(String(32), nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(32), nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False, default="openrouter")
-    requested_models: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    requested_models: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     actual_model: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
     raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     normalized_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     confidence: Mapped[float | None] = mapped_column(Float)
-    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     degradation_reason: Mapped[str | None] = mapped_column(String(128))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     accepted_by_type: Mapped[str | None] = mapped_column(String(32))
@@ -457,12 +486,27 @@ class PipelineJob(TimestampMixin, Base):
     stage: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    max_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=5, server_default=text("5")
+    )
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    __table_args__ = (
+        # repositories/jobs.py:claim_pipeline_jobs filters status IN (...) AND
+        # next_attempt_at <= now, ORDER BY next_attempt_at, on every worker
+        # poll. The single-column status index leaves next_attempt_at
+        # unindexed within each status, forcing a sort/filter over every job
+        # in that status as the table grows.
+        Index("ix_pipeline_jobs_status_next_attempt", "status", "next_attempt_at"),
+    )
 
 
 class DispatchOutbox(TimestampMixin, Base):
@@ -475,7 +519,9 @@ class DispatchOutbox(TimestampMixin, Base):
     idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     routing_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     provider_ref: Mapped[str | None] = mapped_column(String(255))
@@ -492,9 +538,23 @@ class OfficialUser(TimestampMixin, Base):
     jurisdiction_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("jurisdictions.id", ondelete="RESTRICT"), index=True
     )
-    department_keys: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    department_keys: Mapped[list[Any]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        # repositories/officials.py:get_official_by_email looks up by
+        # func.lower(email) on every login attempt. The plain unique(email)
+        # constraint above is case-sensitive, so it neither serves that query
+        # (forcing a seq scan) nor stops two officials being created with
+        # emails that differ only by case (e.g. "Foo@x.com" / "foo@x.com"),
+        # which would make that lookup raise MultipleResultsFound.
+        Index("uq_official_users_email_lower", text("lower(email)"), unique=True),
+    )
 
 
 class OfficialLoginChallenge(Base):
@@ -508,7 +568,9 @@ class OfficialLoginChallenge(Base):
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

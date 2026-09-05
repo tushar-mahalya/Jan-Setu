@@ -7,6 +7,7 @@ record. The multilingual extraction model receives that original transcript.
 import asyncio
 import logging
 import mimetypes
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -57,6 +58,7 @@ async def transcribe_clip(
     headers = {"api-subscription-key": settings.sarvam_api_key.get_secret_value()}
     url = f"{settings.sarvam_base_url.rstrip('/')}/speech-to-text"
 
+    start = time.perf_counter()
     try:
         response = await http_client.post(
             url, headers=headers, data=data, files=files, timeout=settings.sarvam_timeout_seconds
@@ -67,9 +69,20 @@ async def transcribe_clip(
         logger.warning("sarvam_transcription_failed")
         return TranscriptionResult(ok=False)
 
-    transcript = body.get("transcript")
+    # A 2xx with an unexpected shape (list, string, etc.) is a provider failure
+    # like any other — degrade instead of an uncaught AttributeError on .get().
+    transcript = body.get("transcript") if isinstance(body, dict) else None
     if not transcript:
         return TranscriptionResult(ok=False)
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    logger.info(
+        "sarvam_transcription_succeeded",
+        extra={
+            "duration_ms": duration_ms,
+            "audio_bytes": len(audio_bytes),
+            "transcript_length": len(transcript),
+        },
+    )
     return TranscriptionResult(
         ok=True, text=transcript, detected_language=body.get("language_code")
     )

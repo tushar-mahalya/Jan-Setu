@@ -74,6 +74,17 @@ class Settings(BaseSettings):
     sarvam_min_interval_seconds: float = 1.0
     sarvam_timeout_seconds: float = 30.0
 
+    # Gemini (Google AI Studio, OpenAI-compatible endpoint) is the primary
+    # extraction provider: one model serves both text and vision, so a photo
+    # complaint no longer depends on OpenRouter's rotating free chain.
+    # reasoning_effort is pinned low in classify.py — the default thinking
+    # budget spends the whole token allowance before emitting any JSON.
+    google_api_key: SecretStr | None = None
+    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    google_models: str = "gemini-3.6-flash"
+    google_min_interval_seconds: float = 0.0
+    google_timeout_seconds: float = 30.0
+
     # LLM extraction. Groq is the primary provider (fast, 1K requests/day per
     # model on the free tier, strict json_schema on the gpt-oss models);
     # OpenRouter's free chain is the cross-provider failsafe and the only
@@ -108,6 +119,10 @@ class Settings(BaseSettings):
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_from: str = "no-reply@jan-setu.local"
+    # Unset (Mailpit locally): plain SMTP, no STARTTLS/login. Set both to
+    # authenticate over STARTTLS, e.g. OCI Email Delivery in cloud dev/prod.
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
 
     # File uploads (voice clips, photos, generated PDFs).
     upload_dir: str = "./data/uploads"
@@ -120,6 +135,11 @@ class Settings(BaseSettings):
     refresh_token_days: int = 30
     verification_code_ttl_minutes: int = 10
     verification_max_per_hour: int = 3
+    official_code_max_per_hour: int = 5
+    # Fixed official OTP for local demos, so the console can be opened without
+    # reading the mailbox. Unset by default; accepted only in development/test
+    # and boot fails outright if it is set in staging/production.
+    official_dev_login_code: SecretStr | None = None
 
     # Web frontend.
     cors_origins: str = "http://localhost:5173"
@@ -137,13 +157,26 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def reject_dev_login_code_outside_dev(self) -> "Settings":
+        # Fail fast at boot rather than silently ignoring the value: a deploy
+        # that still carries the demo code must not start at all.
+        if self.official_dev_login_code is not None and self.environment not in {
+            "development",
+            "test",
+        }:
+            raise ValueError("OFFICIAL_DEV_LOGIN_CODE must not be set outside development/test")
+        return self
+
     @field_validator(
         "whatsapp_app_secret",
         "whatsapp_access_token",
         "api_key",
         "sarvam_api_key",
+        "google_api_key",
         "groq_api_key",
         "openrouter_api_key",
+        "official_dev_login_code",
         mode="before",
     )
     @classmethod
@@ -173,6 +206,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def google_model_chain(self) -> list[str]:
+        return [model.strip() for model in self.google_models.split(",") if model.strip()]
 
     @property
     def openrouter_model_chain(self) -> list[str]:
@@ -222,9 +259,43 @@ class JsonLogFormatter(logging.Formatter):
         return json.dumps(payload, default=str, separators=(",", ":"))
 
 
+class TextLogFormatter(logging.Formatter):
+    """Text lines carry the same ``extra`` fields the JSON formatter emits.
+
+    LOG_FORMAT defaults to "text", so without this every ``extra={...}`` in the
+    codebase would render as a bare event name and the structured context would
+    only exist in the json path nobody runs locally.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Collect before super().format(), which stamps `message`/`asctime` onto
+        # the record; neither is in LOG_RECORD_RESERVED, so they would echo.
+        fields = " ".join(
+            f"{key}={value}"
+            for key, value in record.__dict__.items()
+            if key not in LOG_RECORD_RESERVED and not key.startswith("_") and value is not None
+        )
+        line = super().format(record)
+        return f"{line} {fields}" if fields else line
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+# Third-party loggers that emit per-operation INFO chatter. fpdf2 subsets the
+# packaged Noto fonts on every generated PDF, and fontTools narrates each table
+# it touches -- roughly 20 INFO lines per complaint, which buries the worker's
+# own logs. Raised to WARNING unless the app itself is running at DEBUG.
+NOISY_LIBRARY_LOGGERS = (
+    "fontTools",
+    "fpdf",
+    "PIL",
+    "httpx",
+    "httpcore",
+    "python_multipart",
+)
 
 
 def configure_logging(
@@ -238,9 +309,15 @@ def configure_logging(
     if log_format.lower() == "json":
         handler.setFormatter(JsonLogFormatter())
     else:
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+        handler.setFormatter(TextLogFormatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
     handler.addFilter(RequestIdFilter())
 
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
     root_logger.setLevel(log_level)
+
+    # Set explicitly in both directions so repeated calls are idempotent and a
+    # later DEBUG run is not silenced by an earlier INFO one.
+    library_level = logging.NOTSET if log_level <= logging.DEBUG else logging.WARNING
+    for name in NOISY_LIBRARY_LOGGERS:
+        logging.getLogger(name).setLevel(library_level)

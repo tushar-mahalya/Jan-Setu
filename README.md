@@ -44,10 +44,9 @@ Install once:
 For the Docker workflow below, Python, `uv`, and Node.js are **not** required on the host.
 
 ### Start everything
-
 ```sh
-git clone git@github.com:tushar-mahalya/Jan-Setu.git
-cd Jan-Setu
+git clone git@github.com:21f1005763/MAY2026-Team-050.git
+cd MAY2026-Team-050
 cp .env.example .env
 docker compose --profile prod up -d --build
 docker compose exec -T api uv run alembic upgrade head
@@ -130,11 +129,13 @@ and Vite hot module reload. **Do not run `uv run jan-setu-worker` locally.**
 ### One-time setup
 
 ```sh
-cd Jan-Setu
+cd MAY2026-Team-050
 cp .env.example .env
-uv sync
-npm --prefix frontend ci
+sh scripts/setup-dev.sh
 ```
+
+`setup-dev.sh` is the only supported setup path — it installs dependencies and
+the git hooks. Running `uv sync` alone leaves the hooks uninstalled.
 
 ### Start the stack
 
@@ -244,7 +245,7 @@ The app builds its host-local PostgreSQL connection from `POSTGRES_HOST`,
 `.env`. Set `DATABASE_URL` only when a deployment platform supplies one full
 connection URL.
 
-Optional shell setup helper:
+Re-run the setup helper after changing dependencies or hook configuration:
 
 ```sh
 sh scripts/setup-dev.sh
@@ -494,6 +495,66 @@ GitHub Actions runs three jobs in parallel on pull requests and pushes to `main`
 
 A `ci-success` job aggregates them. Require the **`CI success`** status check in
 branch protection so every check must pass before a PR can merge.
+
+## Live Dev Deployment (OCI)
+
+`main` auto-deploys to a live dev instance on an Oracle Cloud "Always Free"
+Ampere VM. `.github/workflows/deploy-dev.yml` triggers once `ci.yml` passes on
+`main`, SSHes in, and runs:
+
+```sh
+git fetch origin main && git reset --hard origin/main
+docker compose up -d --build api worker frontend postgres
+docker compose exec -T api uv run alembic upgrade head
+```
+
+`mailpit` and `tunnel` are intentionally left out — the dev VM uses a real
+SMTP relay (below) and its own persistent Cloudflare tunnel process, started
+once outside of Compose so app redeploys never touch it.
+
+### One-time VM setup (do once, in the OCI Console)
+
+1. Create an Ampere A1 Compute instance (Always Free-eligible; 2 OCPU/12GB is
+   plenty), Ubuntu, in a public subnet. Reserve a static public IP.
+2. SSH in, install Docker + the Compose plugin, `git clone` this repo, `cp
+   .env.example .env` and fill in real secrets.
+3. Start a **quick** Cloudflare tunnel pointed at the API (`cloudflared
+   tunnel --url http://localhost:8000`), same as the local `dev` profile's
+   `tunnel` service, but run directly on the VM as its own long-lived
+   process (systemd unit or `docker run -d --restart unless-stopped
+   cloudflare/cloudflared:latest tunnel --url http://host.docker.internal:8000`
+   with `--network host` on Linux). Paste the printed URL into Meta's
+   WhatsApp webhook config as `https://YOUR-URL.trycloudflare.com/whatsapp/webhook`.
+   The URL only changes if this process restarts (e.g. a VM reboot) — repaste
+   it then; app redeploys never touch it.
+4. In the GitHub repo, add secrets `OCI_DEV_HOST` (the reserved IP),
+   `OCI_DEV_SSH_USER`, `OCI_DEV_SSH_KEY` (private key matching a public key
+   added to the VM).
+
+### Real SMTP via OCI Email Delivery
+
+For a live prototype demo, `DISPATCHER=smtp` should land mail in a real
+inbox rather than a local-only Mailpit UI nobody outside the VM can see. OCI
+Email Delivery is Always Free (3,000 emails/month):
+
+1. OCI Console → Email Delivery → approve a sender email/domain (`smtp_from`
+   below must be exactly this approved sender — anything else is rejected).
+2. Identity & Security → a user → SMTP Credentials → generate one. The
+   generated username is an OCID-shaped string, not your account email.
+3. In the VM's `.env` only (never commit these):
+
+   ```text
+   DISPATCHER=smtp
+   SMTP_HOST=smtp.email.<region>.oci.oraclecloud.com
+   SMTP_PORT=587
+   SMTP_FROM=<your-approved-sender>
+   SMTP_USERNAME=<generated-smtp-username>
+   SMTP_PASSWORD=<generated-smtp-password>
+   ```
+
+   Leaving `SMTP_USERNAME`/`SMTP_PASSWORD` blank keeps the existing
+   unauthenticated Mailpit behavior unchanged — this only activates STARTTLS
+   + login when both are set.
 
 ## Frontend Production Deployment
 

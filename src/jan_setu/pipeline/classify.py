@@ -284,6 +284,27 @@ def build_extraction_attempts(
         else None
     )
     attempts: list[dict[str, Any]] = []
+    if settings.google_api_key:
+        for model in settings.google_model_chain:
+            google_body: dict[str, Any] = {
+                "model": model,
+                # Gemini 3 thinks by default and can spend the entire output
+                # budget before the first JSON token; "low" keeps it answering.
+                "reasoning_effort": "high" if escalated else "low",
+            }
+            if schema_format:
+                google_body["response_format"] = schema_format
+            attempts.append(
+                {
+                    "provider": "google",
+                    "model": model,
+                    "url": f"{settings.google_base_url.rstrip('/')}/chat/completions",
+                    "key": settings.google_api_key,
+                    "min_interval": settings.google_min_interval_seconds,
+                    "timeout": settings.google_timeout_seconds,
+                    "body": google_body,
+                }
+            )
     if settings.groq_api_key and not has_image:
         for model in settings.groq_model_chain:
             body: dict[str, Any] = {"model": model}
@@ -527,7 +548,15 @@ async def check_image_match(
                 system_prompt=IMAGE_MATCH_SYSTEM_PROMPT,
                 user_content=content,
             )
-        except (httpx.HTTPError, KeyError, IndexError, ValueError):
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+            logger.warning(
+                "image_match_attempt_failed",
+                extra={
+                    "provider": attempt["provider"],
+                    "model": attempt["model"],
+                    "error_type": type(exc).__name__,
+                },
+            )
             continue
         parsed = parse_image_match(raw)
         if parsed is not None:

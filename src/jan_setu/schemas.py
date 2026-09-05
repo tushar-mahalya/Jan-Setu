@@ -1,7 +1,6 @@
 from datetime import datetime
 from typing import Any
 from uuid import UUID
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -47,9 +46,6 @@ class SendTextResponse(BaseModel):
     stored_message: MessageRead
 
 
-# --- Auth ------------------------------------------------------------------
-
-
 class RequestCodeRequest(BaseModel):
     phone: str = Field(min_length=5, max_length=32)
     browser_nonce: str | None = Field(default=None, min_length=32, max_length=256)
@@ -78,9 +74,6 @@ class AuthStatusResponse(BaseModel):
 
 class RefreshResponse(BaseModel):
     access_token: str
-
-
-# --- Grievances --------------------------------------------------------------
 
 
 class GrievanceEventRead(BaseModel):
@@ -117,6 +110,7 @@ class GrievanceDraftResponse(BaseModel):
     image_match_status: str | None
     flags: list[str]
     pdf_url: str | None
+    photo_url: str | None = None
     taxonomy_version: str | None = None
     category_id: str | None = None
     category_label: str | None = None
@@ -132,6 +126,13 @@ class GrievanceDraftResponse(BaseModel):
     voice_note_metadata: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class GrievanceConfirmResponse(BaseModel):
+    status: str
+    human_id: str | None
+    duplicate_of_human_id: str | None
+    report_count: int | None
+
+
 class TranscriptionPreview(BaseModel):
     text: str | None = None
     language: str | None = None
@@ -139,8 +140,8 @@ class TranscriptionPreview(BaseModel):
 
 
 class GrievanceReviewPatch(BaseModel):
-    category_id: str | None = None
-    asset_scope: str | None = None
+    category_id: str | None = Field(default=None, max_length=128)
+    asset_scope: str | None = Field(default=None, max_length=32)
     summary: str | None = Field(default=None, max_length=600)
     clarification_answer: str | None = Field(default=None, max_length=2000)
 
@@ -158,6 +159,7 @@ class GrievanceDetail(GrievanceSummary):
     dispatch_ref: str | None
     events: list[GrievanceEventRead]
     pdf_url: str | None
+    photo_url: str | None = None
     category_id: str | None = None
     category_label: str | None = None
     domain_label: str | None = None

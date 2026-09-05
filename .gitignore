@@ -11,8 +11,13 @@ wheels/
 
 # Local environment and runtime data
 .env
+.env.bak*
+.env.*.bak
 .ruff_cache/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
 *.log
 .DS_Store
 frontend/test-results/
@@ -23,10 +28,15 @@ frontend/playwright-report/
 .claude/launch.json
 .claude/plans/
 .impeccable/
+skills-lock.json
 
 # Runtime uploads generated during local testing
-data/uploads/
+data/
 
 # Generated product/design briefs
 DESIGN.md
 PRODUCT.md
+.impeccable/
+
+# Hi-res art sources: only the exported webp in frontend/public/ ships.
+docs/assets-src/

@@ -26,6 +26,7 @@ dev = [
 	"anyio>=4.7.0",
 	"pre-commit>=4.0.0",
 	"pytest>=8.3.4",
+	"pytest-cov>=7.1.0",
 	"ruff>=0.8.4",
 ]
 
@@ -39,6 +40,8 @@ packages = ["src/jan_setu"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Ratchet, not a target. Raise as coverage improves; 80% is the goal.
+addopts = "--cov=src/jan_setu --cov-report=term-missing --cov-fail-under=85"
 
 [tool.ruff]
 line-length = 100

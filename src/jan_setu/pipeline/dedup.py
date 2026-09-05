@@ -6,6 +6,7 @@ handful of rows; ``haversine_m`` then does the exact distance check in Python.
 No PostGIS — candidate sets are tens of rows at demo scale.
 """
 
+import logging
 import math
 from dataclasses import dataclass
 
@@ -13,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from jan_setu.db.models import Grievance
 from jan_setu.repositories import find_dedup_candidates
+
+logger = logging.getLogger(__name__)
 
 EARTH_RADIUS_M = 6_371_000
 
@@ -57,4 +60,8 @@ async def find_duplicate(
         distance = haversine_m(lat, lon, candidate.location_latitude, candidate.location_longitude)
         if distance <= radius_m and (best is None or distance < best.distance_m):
             best = DuplicateMatch(master=candidate, distance_m=distance)
+    logger.info(
+        "dedup_checked",
+        extra={"candidate_count": len(candidates), "is_duplicate": best is not None},
+    )
     return best

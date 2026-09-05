@@ -1,6 +1,6 @@
 // TypeScript interfaces mirroring the Jan-Setu backend Pydantic schemas.
 
-export type ImageMatchStatus = "none" | "matched" | "mismatched" | "skipped";
+export type ImageMatchStatus = "none" | "matched" | "mismatched" | "skipped" | "unverified";
 
 export type GrievanceStatus =
   | "draft"
@@ -56,6 +56,7 @@ export interface GrievanceDraftResponse {
   image_match_status: ImageMatchStatus | null;
   flags: string[];
   pdf_url: string | null;
+  photo_url?: string | null;
   taxonomy_version?: string | null;
   category_id?: string | null;
   category_label?: string | null;
@@ -137,6 +138,7 @@ export interface GrievanceDetail extends GrievanceSummary {
   dispatch_ref: string | null;
   events: GrievanceEvent[];
   pdf_url: string | null;
+  photo_url?: string | null;
   category_id?: string | null;
   category_label?: string | null;
   domain_label?: string | null;

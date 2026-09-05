@@ -6,7 +6,7 @@ generation, JWT issuance) that calls into these functions.
 
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,11 +45,11 @@ async def get_user_by_contact_id(session: AsyncSession, *, contact_id: Any) -> U
 
 async def count_recent_verifications(session: AsyncSession, *, phone: str, since: Any) -> int:
     result = await session.execute(
-        select(PhoneVerification).where(
-            PhoneVerification.phone == phone, PhoneVerification.created_at >= since
-        )
+        select(func.count())
+        .select_from(PhoneVerification)
+        .where(PhoneVerification.phone == phone, PhoneVerification.created_at >= since)
     )
-    return len(result.scalars().all())
+    return result.scalar_one()
 
 
 async def create_phone_verification(

@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { apiGet, downloadWithAuth, ApiError } from "../api/client";
+import { apiGet, downloadWithAuth, fetchObjectUrl, ApiError } from "../api/client";
 import type { GrievanceDetail } from "../api/types";
 import StatusChip, { metaForStatus } from "../components/StatusChip";
 import StatusTimeline from "../components/StatusTimeline";
 import { humanizeKey } from "../lib/text";
+import { EvidencePhoto } from "../components/EvidencePhoto";
 import { useI18n, fill } from "../i18n/I18nContext";
 
 function languageLabel(language: string) {
@@ -57,6 +58,6 @@ export default function ComplaintDetail() {
       {facts?.requested_action && <div className="is-wide"><dt>{t.dtRequestedAction}</dt><dd>{facts.requested_action}</dd></div>}
       {facts?.landmark && <div><dt>{t.dtLandmark}</dt><dd>{facts.landmark}</dd></div>}
       {grievance.routing?.sla_hours != null && <div><dt>{t.dtSla}</dt><dd>{fill(t.slaHours, { count: grievance.routing.sla_hours })}</dd></div>}
-    </dl>{grievance.report_count > 1 && <p className="detail-reports">{fill(t.groupedNote, { count: grievance.report_count })}</p>}{grievance.pdf_url && <div className="detail-download"><button type="button" className="app-button app-button--soft" onClick={download} disabled={downloading}>{downloading ? t.preparingReceipt : t.downloadReceipt}</button>{downloadError && <p className="app-error" role="alert">{downloadError}</p>}</div>}</article><aside className="detail-history"><h2>{t.historyTitle}</h2><p>{t.historyNote}</p><StatusTimeline events={grievance.events} /></aside></div>
+    </dl>{grievance.photo_url && <EvidencePhoto path={grievance.photo_url} load={fetchObjectUrl} alt={t.evidencePhotoAlt} caption={t.evidencePhotoCaption} />}{grievance.report_count > 1 && <p className="detail-reports">{fill(t.groupedNote, { count: grievance.report_count })}</p>}{grievance.pdf_url && <div className="detail-download"><button type="button" className="app-button app-button--soft" onClick={download} disabled={downloading}>{downloading ? t.preparingReceipt : t.downloadReceipt}</button>{downloadError && <p className="app-error" role="alert">{downloadError}</p>}</div>}</article><aside className="detail-history"><h2>{t.historyTitle}</h2><p>{t.historyNote}</p><StatusTimeline events={grievance.events} /></aside></div>
   </div>;
 }

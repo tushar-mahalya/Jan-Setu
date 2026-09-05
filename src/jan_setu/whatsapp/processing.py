@@ -11,6 +11,7 @@ ever reaching the FSM.
 """
 
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -88,6 +89,10 @@ async def drive_event(settings: Settings, http_client: httpx.AsyncClient, event_
         claim = await claim_event(session, event_id=event_id, lease_seconds=EVENT_LEASE_SECONDS)
         await session.commit()
     if claim is None:
+        logger.warning(
+            "event_claim_skipped",
+            extra={"event_id": str(event_id), "reason": "already_claimed"},
+        )
         return
 
     if claim["attempt_count"] > MAX_EVENT_ATTEMPTS:
@@ -110,6 +115,12 @@ async def drive_event(settings: Settings, http_client: httpx.AsyncClient, event_
             return  # leave unprocessed; the lease expiry drives a retry
 
     messages_stored = sum(1 for item in stored if item.created)
+    messages_deduped = sum(1 for item in stored if not item.created)
+    if messages_deduped > 0:
+        logger.info(
+            "event_messages_deduped",
+            extra={"event_id": str(event_id), "count": messages_deduped},
+        )
 
     if settings.auto_reply_enabled:
         fresh = [incoming for incoming, item in zip(messages, stored) if item.created]
@@ -225,6 +236,13 @@ async def _handle_inbound(
             contact_id = contact.id
             if not await claim_inbound(session, inbound_message_id=incoming.meta_message_id):
                 await session.commit()  # replay: already consumed
+                logger.warning(
+                    "inbound_claim_skipped",
+                    extra={
+                        "meta_message_id": incoming.meta_message_id,
+                        "reason": "already_consumed",
+                    },
+                )
                 return
 
             # Login approval buttons are context-bound and always short-circuit
@@ -479,11 +497,17 @@ async def run_pipeline_followup(
     wa_id: str,
     grievance_id: str,
 ) -> None:
+    start_time = time.perf_counter()
     try:
         result = await run_pipeline(grievance_id, settings, http_client)
     except Exception:
         logger.exception("pipeline_run_failed", extra={"grievance_id": grievance_id})
         return
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    logger.info(
+        "pipeline_run_completed",
+        extra={"grievance_id": grievance_id, "outcome": result.status, "duration_ms": duration_ms},
+    )
     await _send_pipeline_followup_message(
         settings,
         client,
@@ -505,6 +529,7 @@ async def recheck_followup(
     grievance_id: str,
     proceed_without_photo: bool,
 ) -> None:
+    start_time = time.perf_counter()
     try:
         result = await recheck_image(
             grievance_id, settings, http_client, proceed_without_photo=proceed_without_photo
@@ -512,6 +537,15 @@ async def recheck_followup(
     except Exception:
         logger.exception("pipeline_recheck_failed", extra={"grievance_id": grievance_id})
         return
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    logger.info(
+        "pipeline_recheck_completed",
+        extra={
+            "grievance_id": grievance_id,
+            "outcome": result.status,
+            "duration_ms": duration_ms,
+        },
+    )
     await _send_pipeline_followup_message(
         settings,
         client,
@@ -561,8 +595,20 @@ async def _send_pipeline_followup_message(
                         filename=f"{grievance.human_id}.pdf",
                         mime_type="application/pdf",
                     )
+                    logger.info(
+                        "pdf_uploaded",
+                        extra={
+                            "grievance_id": grievance_id,
+                            "file_name": f"{grievance.human_id}.pdf",
+                        },
+                    )
                 except Exception:
-                    logger.warning("pdf_upload_failed", extra={"grievance_id": grievance_id})
+                    logger.exception("pdf_upload_failed", extra={"grievance_id": grievance_id})
+            else:
+                logger.warning(
+                    "pdf_generation_skipped",
+                    extra={"grievance_id": grievance_id, "reason": "no_pdf_path"},
+                )
             conversation.state = STATE_AWAITING_CONFIRMATION
             body = msg.PDF_CONFIRM.format(summary=summary_text)
             intent = build_confirmation_intent(
@@ -597,6 +643,7 @@ async def finalize_followup(
     wa_id: str,
     grievance_id: str,
 ) -> None:
+    start_time = time.perf_counter()
     try:
         outcome: FinalizeOutcome = await finalize_grievance(
             settings, http_client, grievance_id=grievance_id
@@ -604,6 +651,15 @@ async def finalize_followup(
     except Exception:
         logger.exception("finalize_failed", extra={"grievance_id": grievance_id})
         return
+    duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    logger.info(
+        "finalize_completed",
+        extra={
+            "grievance_id": grievance_id,
+            "outcome": outcome.status,
+            "duration_ms": duration_ms,
+        },
+    )
     body = msg.REGISTERED_FINAL.format(grievance_id=outcome.human_id)
     if outcome.status == "duplicate" and outcome.report_count:
         body += msg.DUPLICATE_NOTE.format(count=outcome.report_count)

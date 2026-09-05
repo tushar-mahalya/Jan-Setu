@@ -1,0 +1,22 @@
+# Commit message rules: one Conventional Commits subject line, no body.
+# Enforced by the commit-msg hook, not by CI.
+
+[general]
+contrib=contrib-title-conventional-commits
+ignore=body-is-missing
+
+[contrib-title-conventional-commits]
+types=build,chore,ci,docs,feat,fix,perf,refactor,revert,style,test
+
+[title-max-length]
+line-length=72
+
+[title-min-length]
+min-length=20
+
+# type(optional-scope): lowercase description, no trailing period
+[title-match-regex]
+regex=^[a-z]+(\([a-z0-9-]+\))?: [a-z].*[^.]$
+
+[body-max-line-length]
+line-length=72

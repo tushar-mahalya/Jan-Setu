@@ -42,8 +42,12 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        # Only the verbs and headers the app actually exposes/consumes — the
+        # frontend only ever sends Authorization + Content-Type, and no route
+        # uses PUT/DELETE. Narrower than "*" so a credentialed CORS request
+        # can't carry arbitrary headers/verbs.
+        allow_methods=["GET", "POST", "PATCH"],
+        allow_headers=["Authorization", "Content-Type"],
     )
     add_request_logging(app)
     app.include_router(router)
