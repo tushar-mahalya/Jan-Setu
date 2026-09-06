@@ -197,10 +197,20 @@ flowchart TB
     POLL --> CORE
     AUTH --> META
 
-    classDef ext fill:#fff3e0,stroke:#e65100;
-    classDef store fill:#e8f5e9,stroke:#1b5e20;
-    class META,STT,LLM,GEO,DISP ext;
+    classDef client fill:#4f46e5,stroke:#312e81,color:#ffffff;
+    classDef edge fill:#475569,stroke:#1e293b,color:#ffffff;
+    classDef api fill:#0d9488,stroke:#134e4a,color:#ffffff;
+    classDef pipe fill:#7c3aed,stroke:#4c1d95,color:#ffffff;
+    classDef worker fill:#b45309,stroke:#78350f,color:#ffffff;
+    classDef store fill:#047857,stroke:#064e3b,color:#ffffff;
+    classDef ext fill:#be123c,stroke:#881337,color:#ffffff;
+    class WA,WEB,OFF client;
+    class NGINX,TUNNEL edge;
+    class WHOOK,WEBAPI,AUTH,OFFAPI api;
+    class CORE pipe;
+    class POLL worker;
     class PG,FILES store;
+    class META,STT,LLM,GEO,DISP ext;
 ```
 
 ---
@@ -232,6 +242,19 @@ flowchart TD
     RESULT -- "no, retries left" --> RETRY["Requeue (max 5 attempts)"]
     RETRY --> DISPATCH
     RESULT -- "no, exhausted" --> FAIL(["Status: dispatch_failed"])
+
+    classDef start fill:#4f46e5,stroke:#312e81,color:#ffffff;
+    classDef proc fill:#0d9488,stroke:#134e4a,color:#ffffff;
+    classDef decision fill:#b45309,stroke:#78350f,color:#ffffff;
+    classDef hold fill:#7c3aed,stroke:#4c1d95,color:#ffffff;
+    classDef success fill:#047857,stroke:#064e3b,color:#ffffff;
+    classDef fail fill:#be123c,stroke:#881337,color:#ffffff;
+    class START start;
+    class COMBINE,CLASSIFY,RGEO,MATCH,PDF,DISPATCH proc;
+    class GEO,IMG,PRIO,DEDUP,RESULT decision;
+    class HOLD,WINDOW,DUP,RETRY hold;
+    class DONE success;
+    class FAIL fail;
 ```
 
 > **Priority categories skip the dedup window** and dispatch immediately — a burst water main shouldn't wait behind a 24-hour deduplication hold.
@@ -257,6 +280,15 @@ stateDiagram-v2
     done --> [*]
     awaiting_location --> expired: TTL elapsed
     expired --> awaiting_location: new message restarts
+
+    classDef active fill:#0d9488,stroke:#134e4a,color:#ffffff;
+    classDef review fill:#b45309,stroke:#78350f,color:#ffffff;
+    classDef done fill:#047857,stroke:#064e3b,color:#ffffff;
+    classDef problem fill:#be123c,stroke:#881337,color:#ffffff;
+    class awaiting_location,confirming_location,awaiting_issue,awaiting_photo,processing active;
+    class awaiting_confirmation review;
+    class done done;
+    class photo_mismatch,expired problem;
 ```
 
 ---
@@ -339,6 +371,17 @@ flowchart LR
     GEM -->|"ok"| OUT["Category + priority + department"]
     GROQ -->|"ok"| OUT
     ORT -->|"ok"| OUT
+
+    classDef input fill:#4f46e5,stroke:#312e81,color:#ffffff;
+    classDef decision fill:#b45309,stroke:#78350f,color:#ffffff;
+    classDef provider fill:#0d9488,stroke:#134e4a,color:#ffffff;
+    classDef success fill:#047857,stroke:#064e3b,color:#ffffff;
+    classDef fail fill:#be123c,stroke:#881337,color:#ffffff;
+    class IN input;
+    class G,GR,OR decision;
+    class GEM,GROQ,ORT provider;
+    class OUT success;
+    class DEGRADE fail;
 ```
 
 Image-bearing prompts skip Groq (text-only) automatically. Each provider carries its own `min_interval` throttle enforced through the shared rate-limit table.
